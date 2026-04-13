@@ -5,6 +5,7 @@
 
 import { Audio } from 'expo-av';
 import { QvacBridge } from '@core/audio/QvacBridge';
+import { AudioPlayer } from '@core/audio/AudioPlayer';
 import { ClauseStreamer } from './ClauseStreamer';
 import { AppConfig } from '@core/config/AppConfig';
 import type { PipelinePhase } from '@domain/types';
@@ -38,6 +39,7 @@ export class VoicePipeline {
   private listenTimer: ReturnType<typeof setTimeout> | null = null;
   private ttsPlaying = false;
   private ttsAborted = false;
+  private readonly audioPlayer = new AudioPlayer();
 
   constructor(callbacks: PipelineCallbacks, config: PipelineConfig = {}) {
     this.callbacks = callbacks;
@@ -245,15 +247,21 @@ export class VoicePipeline {
     }
 
     this.ttsPlaying = true;
+    this.audioPlayer.reset();
+
     void QvacBridge.ttsSpeak(
       nextClause,
       TTS_SAMPLE_RATE,
-      (_pcm, _sampleRate) => {
-        // Audio playback via expo-av AudioPlayer is handled here.
-        // For now, chunks are received; actual playback wiring is in AudioPlayer.
+      (pcm, sampleRate) => {
+        // Accumulate PCM chunks from the worklet into the AudioPlayer buffer
+        this.audioPlayer.addChunk(pcm, sampleRate);
       },
     )
-      .then(() => {
+      .then(async () => {
+        // All chunks received — encode WAV, write to temp file, play
+        if (!this.ttsAborted) {
+          await this.audioPlayer.playAndClear();
+        }
         this.ttsPlaying = false;
         if (!this.ttsAborted) {
           this._playNextClause(queue, onEmpty);
@@ -297,6 +305,7 @@ export class VoicePipeline {
 
   private _abortTts(): void {
     this.ttsAborted = true;
+    void this.audioPlayer.stop().catch(() => {});
     void QvacBridge.llmCancel().catch(() => {});
   }
 

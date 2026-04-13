@@ -103,35 +103,64 @@ export const LLM_MODELS: Record<string, LlmModelConfig> = {
 export const DEFAULT_LLM_MODEL_ID = 'qwen35_2b_iq4';
 
 // ─── TTS Models ──────────────────────────────────────────────────────────────
+// Supertonic ONNX models from: https://huggingface.co/onnx-community/Supertonic-TTS-ONNX
 
 const HF_SUPERTONIC_BASE =
-  'https://huggingface.co/supertone/supertonic-tts/resolve/main';
+  'https://huggingface.co/onnx-community/Supertonic-TTS-ONNX/resolve/main';
 
 export const TTS_MODELS: Record<string, TtsModelConfig> = {
   supertonic_en: {
     id: 'supertonic_en',
-    label: 'Supertonic English',
+    label: 'Supertonic English (~180 MB)',
     engine: 'supertonic',
     modelDir: 'supertonic_en',
     files: [
+      // Tokenizer
       {
-        name: 'text_encoder.onnx',
-        url: `${HF_SUPERTONIC_BASE}/text_encoder.onnx`,
-        sizeBytes: 50_000_000,
+        name: 'tokenizer.json',
+        url: `${HF_SUPERTONIC_BASE}/tokenizer.json`,
+        sizeBytes: 1_400_000,
       },
+      // ONNX models (in onnx/ subdirectory — downloaded flat into modelDir)
       {
-        name: 'latent_denoiser.onnx',
-        url: `${HF_SUPERTONIC_BASE}/latent_denoiser.onnx`,
-        sizeBytes: 80_000_000,
-      },
-      {
-        name: 'voice_decoder.onnx',
-        url: `${HF_SUPERTONIC_BASE}/voice_decoder.onnx`,
+        name: 'onnx/text_encoder.onnx',
+        url: `${HF_SUPERTONIC_BASE}/onnx/text_encoder.onnx`,
         sizeBytes: 40_000_000,
       },
       {
-        name: 'F1.bin',
+        name: 'onnx/text_encoder.onnx_data',
+        url: `${HF_SUPERTONIC_BASE}/onnx/text_encoder.onnx_data`,
+        sizeBytes: 10_000_000,
+      },
+      {
+        name: 'onnx/latent_denoiser.onnx',
+        url: `${HF_SUPERTONIC_BASE}/onnx/latent_denoiser.onnx`,
+        sizeBytes: 70_000_000,
+      },
+      {
+        name: 'onnx/latent_denoiser.onnx_data',
+        url: `${HF_SUPERTONIC_BASE}/onnx/latent_denoiser.onnx_data`,
+        sizeBytes: 20_000_000,
+      },
+      {
+        name: 'onnx/voice_decoder.onnx',
+        url: `${HF_SUPERTONIC_BASE}/onnx/voice_decoder.onnx`,
+        sizeBytes: 35_000_000,
+      },
+      {
+        name: 'onnx/voice_decoder.onnx_data',
+        url: `${HF_SUPERTONIC_BASE}/onnx/voice_decoder.onnx_data`,
+        sizeBytes: 5_000_000,
+      },
+      // Default voice preset (F1 = female)
+      {
+        name: 'voices/F1.bin',
         url: `${HF_SUPERTONIC_BASE}/voices/F1.bin`,
+        sizeBytes: 500_000,
+      },
+      {
+        name: 'voices/M1.bin',
+        url: `${HF_SUPERTONIC_BASE}/voices/M1.bin`,
         sizeBytes: 500_000,
       },
     ],

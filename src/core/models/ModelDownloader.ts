@@ -104,6 +104,17 @@ export async function downloadModelDir(
 
   for (const task of tasks) {
     const filePath = `${dirPath}${task.filename}`;
+
+    // Create subdirectory for paths like 'onnx/text_encoder.onnx'
+    const slashIdx = task.filename.lastIndexOf('/');
+    if (slashIdx !== -1) {
+      const subDir = `${dirPath}${task.filename.substring(0, slashIdx)}/`;
+      const subDirInfo = await FileSystem.getInfoAsync(subDir);
+      if (!subDirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(subDir, { intermediates: true });
+      }
+    }
+
     const fileInfo = await FileSystem.getInfoAsync(filePath);
     if (fileInfo.exists && (fileInfo.size ?? 0) >= task.expectedSizeBytes * 0.95) {
       continue;
