@@ -5,7 +5,6 @@ import { Stack } from 'expo-router';
 import { PaperProvider } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
 import { AppTheme } from '@ui/theme/theme';
-import { QvacBridge } from '@core/audio/QvacBridge';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { useConversationStore } from '@domain/ConversationStore';
 
@@ -14,9 +13,6 @@ export default function RootLayout() {
   const loadConversations = useConversationStore((s) => s.loadConversations);
 
   useEffect(() => {
-    // Start the Bare worklet as early as possible
-    QvacBridge.start();
-    // Load persisted state
     void loadSettings();
     void loadConversations();
   }, [loadSettings, loadConversations]);

@@ -18,6 +18,9 @@ export const AppConfig = {
     defaultLanguage: 'en',
     nThreads: 2,
     suppressNonSpeech: true,
+    vadThreshold: 0.5,
+    vadMinSpeechDurationMs: 200,
+    vadMinSilenceDurationMs: 300,
   },
 
   // LLM configuration

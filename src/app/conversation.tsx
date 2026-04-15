@@ -86,8 +86,6 @@ export default function ConversationScreen() {
         maxTokens: activeConversation?.maxResponseTokens ?? settings.llmMaxTokens,
         temperature:
           activeConversation?.temperature ?? settings.llmTemperature,
-        ttsSpeed: activeConversation?.ttsSpeed ?? settings.ttsSpeed,
-        ttsVoice: settings.ttsVoice,
       },
     );
     pipelineRef.current = pipeline;

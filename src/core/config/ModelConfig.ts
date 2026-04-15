@@ -1,170 +1,142 @@
 // ─── Model Configuration ─────────────────────────────────────────────────────
-// Describes all downloadable models: URLs, file names, sizes.
-// No hardcoded paths — paths are resolved at runtime from the models directory.
+// Centralizes model selection and load parameters using @qvac/sdk model registry.
+// All model constants come from the SDK — no manual URLs or file management needed.
 
-export interface ModelFile {
-  name: string;
-  url: string;
-  sizeBytes: number;
-}
+import {
+  WHISPER_BASE_Q8_0,
+  WHISPER_TINY_Q8_0,
+  QWEN3_1_7B_INST_Q4,
+  QWEN3_4B_INST_Q4_K_M,
+  TTS_TOKENIZER_SUPERTONIC,
+  TTS_TEXT_ENCODER_SUPERTONIC_FP32,
+  TTS_LATENT_DENOISER_SUPERTONIC_FP32,
+  TTS_VOICE_DECODER_SUPERTONIC_FP32,
+  TTS_VOICE_STYLE_SUPERTONIC,
+} from '@qvac/sdk';
+import { AppConfig } from './AppConfig';
+import type { SttLoadConfig } from '@core/inference/SttService';
+import type { LlmLoadConfig } from '@core/inference/LlmService';
+import type { TtsLoadConfig } from '@core/inference/TtsService';
 
-export interface SttModelConfig {
+// ─── STT Profiles ─────────────────────────────────────────────────────────────
+
+export interface SttProfile {
   id: string;
   label: string;
-  files: ModelFile[];
-  vadFile: ModelFile;
+  estimatedBytes: number;
+  buildLoadConfig: (useGpu: boolean, language: string) => SttLoadConfig;
 }
 
-export interface LlmModelConfig {
-  id: string;
-  label: string;
-  file: ModelFile;
-}
-
-export interface TtsModelConfig {
-  id: string;
-  label: string;
-  engine: 'supertonic' | 'chatterbox';
-  modelDir: string;
-  files: ModelFile[];
-}
-
-// ─── STT Models ──────────────────────────────────────────────────────────────
-
-const HF_WHISPER_BASE =
-  'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
-
-const HF_SILERO_VAD =
-  'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-silero-v5.1.2.bin';
-
-export const STT_MODELS: Record<string, SttModelConfig> = {
+export const STT_PROFILES: Record<string, SttProfile> = {
   whisper_base: {
     id: 'whisper_base',
-    label: 'Whisper Base (148 MB)',
-    files: [
-      {
-        name: 'ggml-base.bin',
-        url: `${HF_WHISPER_BASE}/ggml-base.bin`,
-        sizeBytes: 147_964_211,
-      },
-    ],
-    vadFile: {
-      name: 'ggml-silero-v5.1.2.bin',
-      url: HF_SILERO_VAD,
-      sizeBytes: 885_000,
-    },
+    label: 'Whisper Base Q8 (~150 MB)',
+    estimatedBytes: 153_000_000,
+    buildLoadConfig: (useGpu, language) => ({
+      modelConstant: WHISPER_BASE_Q8_0,
+      language,
+      nThreads: AppConfig.stt.nThreads,
+      vadThreshold: AppConfig.stt.vadThreshold,
+      vadMinSpeechDurationMs: AppConfig.stt.vadMinSpeechDurationMs,
+      vadMinSilenceDurationMs: AppConfig.stt.vadMinSilenceDurationMs,
+      useGpu,
+    }),
   },
-  whisper_small: {
-    id: 'whisper_small',
-    label: 'Whisper Small (488 MB)',
-    files: [
-      {
-        name: 'ggml-small.bin',
-        url: `${HF_WHISPER_BASE}/ggml-small.bin`,
-        sizeBytes: 487_601_171,
-      },
-    ],
-    vadFile: {
-      name: 'ggml-silero-v5.1.2.bin',
-      url: HF_SILERO_VAD,
-      sizeBytes: 885_000,
-    },
+  whisper_tiny: {
+    id: 'whisper_tiny',
+    label: 'Whisper Tiny (~40 MB)',
+    estimatedBytes: 42_000_000,
+    buildLoadConfig: (useGpu, language) => ({
+      modelConstant: WHISPER_TINY_Q8_0,
+      language,
+      nThreads: AppConfig.stt.nThreads,
+      vadThreshold: AppConfig.stt.vadThreshold,
+      vadMinSpeechDurationMs: AppConfig.stt.vadMinSpeechDurationMs,
+      vadMinSilenceDurationMs: AppConfig.stt.vadMinSilenceDurationMs,
+      useGpu,
+    }),
   },
 };
 
-export const DEFAULT_STT_MODEL_ID = 'whisper_base';
+export const DEFAULT_STT_PROFILE_ID = 'whisper_base';
 
-// ─── LLM Models ──────────────────────────────────────────────────────────────
+// ─── LLM Profiles ─────────────────────────────────────────────────────────────
 
-const HF_QWEN_BASE =
-  'https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main';
+export interface LlmProfile {
+  id: string;
+  label: string;
+  estimatedBytes: number;
+  buildLoadConfig: (
+    useGpu: boolean,
+    systemPrompt: string,
+    temperature: number,
+    maxTokens: number,
+  ) => LlmLoadConfig;
+}
 
-export const LLM_MODELS: Record<string, LlmModelConfig> = {
-  qwen35_2b_iq4: {
-    id: 'qwen35_2b_iq4',
-    label: 'Qwen 3.5 2B IQ4 (~1.3 GB)',
-    file: {
-      name: 'Qwen3.5-2B-IQ4_NL.gguf',
-      url: `${HF_QWEN_BASE}/Qwen3.5-2B-IQ4_NL.gguf`,
-      sizeBytes: 1_306_525_696,
-    },
+export const LLM_PROFILES: Record<string, LlmProfile> = {
+  qwen3_1_7b: {
+    id: 'qwen3_1_7b',
+    label: 'Qwen3 1.7B Q4 (~1.1 GB)',
+    estimatedBytes: 1_100_000_000,
+    buildLoadConfig: (useGpu, systemPrompt, temperature, maxTokens) => ({
+      modelConstant: QWEN3_1_7B_INST_Q4,
+      contextSize: AppConfig.llm.contextSize,
+      temperature,
+      maxTokens,
+      systemPrompt,
+      useGpu,
+    }),
   },
-  qwen35_0_8b_q8: {
-    id: 'qwen35_0_8b_q8',
-    label: 'Qwen 3.5 0.8B Q8 (~870 MB)',
-    file: {
-      name: 'Qwen3.5-0.8B-Q8_0.gguf',
-      url: `${HF_QWEN_BASE}/Qwen3.5-0.8B-Q8_0.gguf`,
-      sizeBytes: 870_000_000,
-    },
+  qwen3_4b: {
+    id: 'qwen3_4b',
+    label: 'Qwen3 4B Q4 (~2.5 GB)',
+    estimatedBytes: 2_500_000_000,
+    buildLoadConfig: (useGpu, systemPrompt, temperature, maxTokens) => ({
+      modelConstant: QWEN3_4B_INST_Q4_K_M,
+      contextSize: AppConfig.llm.contextSize,
+      temperature,
+      maxTokens,
+      systemPrompt,
+      useGpu,
+    }),
   },
 };
 
-export const DEFAULT_LLM_MODEL_ID = 'qwen35_2b_iq4';
+export const DEFAULT_LLM_PROFILE_ID = 'qwen3_1_7b';
 
-// ─── TTS Models ──────────────────────────────────────────────────────────────
-// Supertonic ONNX models from: https://huggingface.co/onnx-community/Supertonic-TTS-ONNX
+// ─── TTS Profiles ─────────────────────────────────────────────────────────────
 
-const HF_SUPERTONIC_BASE =
-  'https://huggingface.co/onnx-community/Supertonic-TTS-ONNX/resolve/main';
+export interface TtsProfile {
+  id: string;
+  label: string;
+  estimatedBytes: number;
+  sampleRate: number;
+  buildLoadConfig: (
+    useGpu: boolean,
+    speed: number,
+    language: 'en' | 'de' | 'es' | 'it',
+  ) => TtsLoadConfig;
+}
 
-export const TTS_MODELS: Record<string, TtsModelConfig> = {
+export const TTS_PROFILES: Record<string, TtsProfile> = {
   supertonic_en: {
     id: 'supertonic_en',
-    label: 'Supertonic English (~180 MB)',
-    engine: 'supertonic',
-    modelDir: 'supertonic_en',
-    files: [
-      // Tokenizer
-      {
-        name: 'tokenizer.json',
-        url: `${HF_SUPERTONIC_BASE}/tokenizer.json`,
-        sizeBytes: 1_400_000,
-      },
-      // ONNX models (in onnx/ subdirectory — downloaded flat into modelDir)
-      {
-        name: 'onnx/text_encoder.onnx',
-        url: `${HF_SUPERTONIC_BASE}/onnx/text_encoder.onnx`,
-        sizeBytes: 40_000_000,
-      },
-      {
-        name: 'onnx/text_encoder.onnx_data',
-        url: `${HF_SUPERTONIC_BASE}/onnx/text_encoder.onnx_data`,
-        sizeBytes: 10_000_000,
-      },
-      {
-        name: 'onnx/latent_denoiser.onnx',
-        url: `${HF_SUPERTONIC_BASE}/onnx/latent_denoiser.onnx`,
-        sizeBytes: 70_000_000,
-      },
-      {
-        name: 'onnx/latent_denoiser.onnx_data',
-        url: `${HF_SUPERTONIC_BASE}/onnx/latent_denoiser.onnx_data`,
-        sizeBytes: 20_000_000,
-      },
-      {
-        name: 'onnx/voice_decoder.onnx',
-        url: `${HF_SUPERTONIC_BASE}/onnx/voice_decoder.onnx`,
-        sizeBytes: 35_000_000,
-      },
-      {
-        name: 'onnx/voice_decoder.onnx_data',
-        url: `${HF_SUPERTONIC_BASE}/onnx/voice_decoder.onnx_data`,
-        sizeBytes: 5_000_000,
-      },
-      // Default voice preset (F1 = female)
-      {
-        name: 'voices/F1.bin',
-        url: `${HF_SUPERTONIC_BASE}/voices/F1.bin`,
-        sizeBytes: 500_000,
-      },
-      {
-        name: 'voices/M1.bin',
-        url: `${HF_SUPERTONIC_BASE}/voices/M1.bin`,
-        sizeBytes: 500_000,
-      },
-    ],
+    label: 'Supertonic TTS (~180 MB)',
+    estimatedBytes: 182_000_000,
+    sampleRate: 44100,
+    buildLoadConfig: (useGpu, speed, language) => ({
+      tokenizerSrc: TTS_TOKENIZER_SUPERTONIC.src,
+      textEncoderSrc: TTS_TEXT_ENCODER_SUPERTONIC_FP32.src,
+      latentDenoiserSrc: TTS_LATENT_DENOISER_SUPERTONIC_FP32.src,
+      voiceDecoderSrc: TTS_VOICE_DECODER_SUPERTONIC_FP32.src,
+      voiceSrc: TTS_VOICE_STYLE_SUPERTONIC.src,
+      language,
+      speed,
+      sampleRate: 44100,
+      useGpu,
+    }),
   },
 };
 
-export const DEFAULT_TTS_MODEL_ID = 'supertonic_en';
+export const DEFAULT_TTS_PROFILE_ID = 'supertonic_en';

@@ -12,8 +12,7 @@
       "@core/*": ["./src/core/*"],
       "@domain/*": ["./src/domain/*"],
       "@data/*": ["./src/data/*"],
-      "@ui/*": ["./src/ui/*"],
-      "@worklet/*": ["./worklet/*"]
+      "@ui/*": ["./src/ui/*"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.d.ts", "expo-env.d.ts"]

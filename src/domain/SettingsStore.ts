@@ -7,9 +7,9 @@ import {
   AppConfig,
 } from '@core/config/AppConfig';
 import {
-  DEFAULT_STT_MODEL_ID,
-  DEFAULT_LLM_MODEL_ID,
-  DEFAULT_TTS_MODEL_ID,
+  DEFAULT_STT_PROFILE_ID,
+  DEFAULT_LLM_PROFILE_ID,
+  DEFAULT_TTS_PROFILE_ID,
 } from '@core/config/ModelConfig';
 
 const SETTINGS_KEY = 'jarvisqvac_settings';
@@ -42,9 +42,9 @@ const defaultSettings: AppSettings = {
 };
 
 const defaultModelIds: ModelIds = {
-  sttModelId: DEFAULT_STT_MODEL_ID,
-  llmModelId: DEFAULT_LLM_MODEL_ID,
-  ttsModelId: DEFAULT_TTS_MODEL_ID,
+  sttModelId: DEFAULT_STT_PROFILE_ID,
+  llmModelId: DEFAULT_LLM_PROFILE_ID,
+  ttsModelId: DEFAULT_TTS_PROFILE_ID,
 };
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
