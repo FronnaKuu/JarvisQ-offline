@@ -1,4 +1,6 @@
 // ─── Voice Button ─────────────────────────────────────────────────────────────
+// Shows pipeline phase with color + animated ring.
+// During LISTENING: ring scale reflects real microphone amplitude (dBFS).
 
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -7,6 +9,8 @@ import type { PipelinePhase } from '@domain/types';
 
 interface Props {
   phase: PipelinePhase;
+  /** Current dBFS amplitude from microphone (-160 to 0). Used during LISTENING. */
+  amplitude?: number;
   onPress: () => void;
 }
 
@@ -24,36 +28,62 @@ const PHASE_LABELS: Record<PipelinePhase, string> = {
   SPEAKING: 'Speaking…',
 };
 
-export function VoiceButton({ phase, onPress }: Props) {
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+const PHASE_ICONS: Record<PipelinePhase, string> = {
+  IDLE: '🎤',
+  LISTENING: '🔴',
+  THINKING: '⚡',
+  SPEAKING: '🔊',
+};
 
+// Maps dBFS [-60, -10] → scale [1.0, 1.5]
+function dbToScale(db: number): number {
+  const clamped = Math.max(-60, Math.min(-10, db));
+  return 1.0 + ((clamped + 60) / 50) * 0.5;
+}
+
+export function VoiceButton({ phase, amplitude = -160, onPress }: Props) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
+
+  // Drive ring scale from real amplitude during LISTENING
   useEffect(() => {
     if (phase === 'LISTENING') {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.25,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-        ]),
-      ).start();
+      const target = dbToScale(amplitude);
+      Animated.spring(scaleAnim, {
+        toValue: target,
+        useNativeDriver: true,
+        speed: 40,
+        bounciness: 2,
+      }).start();
     } else {
-      pulseAnim.stopAnimation();
-      Animated.timing(pulseAnim, {
+      Animated.timing(scaleAnim, {
         toValue: 1,
         duration: 200,
         useNativeDriver: true,
       }).start();
     }
+  }, [phase, amplitude, scaleAnim]);
+
+  // Slow idle pulse for THINKING / SPEAKING phases
+  useEffect(() => {
+    if (phase === 'THINKING' || phase === 'SPEAKING') {
+      pulseLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.15, duration: 700, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.0, duration: 700, useNativeDriver: true }),
+        ]),
+      );
+      pulseLoop.current.start();
+    } else {
+      pulseLoop.current?.stop();
+      pulseLoop.current = null;
+      pulseAnim.setValue(1);
+    }
   }, [phase, pulseAnim]);
 
   const color = PHASE_COLORS[phase];
+  const ringScale = phase === 'LISTENING' ? scaleAnim : pulseAnim;
   const isInteractive = phase === 'IDLE' || phase === 'LISTENING';
 
   return (
@@ -61,7 +91,7 @@ export function VoiceButton({ phase, onPress }: Props) {
       <Animated.View
         style={[
           styles.ring,
-          { borderColor: color, transform: [{ scale: pulseAnim }] },
+          { borderColor: color, transform: [{ scale: ringScale }] },
         ]}
       />
       <TouchableOpacity
@@ -69,9 +99,7 @@ export function VoiceButton({ phase, onPress }: Props) {
         style={[styles.button, { backgroundColor: color }]}
         activeOpacity={0.8}
       >
-        <Text style={styles.icon} variant="headlineMedium">
-          {phase === 'LISTENING' ? '🔴' : '🎤'}
-        </Text>
+        <Text style={styles.icon}>{PHASE_ICONS[phase]}</Text>
       </TouchableOpacity>
       <Text style={styles.label} variant="labelMedium">
         {PHASE_LABELS[phase]}
@@ -81,17 +109,14 @@ export function VoiceButton({ phase, onPress }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    alignItems: 'center',
-    gap: 12,
-  },
+  container: { alignItems: 'center', gap: 12 },
   ring: {
     position: 'absolute',
     width: 88,
     height: 88,
     borderRadius: 44,
     borderWidth: 2,
-    opacity: 0.4,
+    opacity: 0.45,
   },
   button: {
     width: 72,
@@ -105,11 +130,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
   },
-  icon: {
-    fontSize: 28,
-  },
-  label: {
-    color: '#C6C4CE',
-    letterSpacing: 0.5,
-  },
+  icon: { fontSize: 28 },
+  label: { color: '#C6C4CE', letterSpacing: 0.5 },
 });

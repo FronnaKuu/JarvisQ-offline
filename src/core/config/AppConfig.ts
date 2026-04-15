@@ -4,8 +4,6 @@
 export const AppConfig = {
   // Pipeline timing
   pipeline: {
-    vadSilenceDurationMs: 300,
-    vadThreshold: 0.5,
     listenTimeoutMs: 20_000,
     minHardBoundaryChars: 6,
     minSoftBoundaryChars: 20,
@@ -13,7 +11,20 @@ export const AppConfig = {
     softBoundaries: /[,:—]/,
   },
 
-  // STT configuration
+  // Amplitude-based VAD (Voice Activity Detection) during recording.
+  // Operates on dBFS values from expo-av's metering feature.
+  vad: {
+    // dBFS above which we consider speech has started
+    speechThresholdDb: -35,
+    // dBFS below which silence starts counting
+    silenceThresholdDb: -45,
+    // Milliseconds of continuous silence before recording auto-stops
+    silenceDurationMs: 900,
+    // Minimum speech duration to bother transcribing (filter out noise clicks)
+    minSpeechDurationMs: 300,
+  },
+
+  // STT configuration (passed to Whisper model config in @qvac/sdk loadModel)
   stt: {
     defaultLanguage: 'en',
     nThreads: 2,
@@ -29,7 +40,6 @@ export const AppConfig = {
     defaultTemperature: 0.7,
     defaultMaxTokens: 256,
     defaultTopP: 0.9,
-    gpuLayers: 99,
   },
 
   // TTS configuration
@@ -37,7 +47,12 @@ export const AppConfig = {
     defaultVoice: 'F1',
     defaultSpeed: 1.0,
     defaultLanguage: 'en',
-    numInferenceSteps: 5,
+  },
+
+  // Model storage
+  models: {
+    directoryName: 'qvac_models',
+    minValidFileSizeBytes: 1024,
   },
 
   // Conversation management
@@ -46,11 +61,5 @@ export const AppConfig = {
     defaultSystemPrompt:
       'You are Jarvis, a concise and helpful AI assistant. Respond naturally and briefly.',
     maxContextTurns: 10,
-  },
-
-  // Model storage
-  models: {
-    directoryName: 'models',
-    minValidFileSizeBytes: 10_000,
   },
 } as const;

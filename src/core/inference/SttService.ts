@@ -1,9 +1,16 @@
 // ─── STT Service ─────────────────────────────────────────────────────────────
-// Wraps @qvac/sdk speech-to-text (Whisper) with load/transcribe/unload lifecycle.
-// Accepts a WAV file path from expo-av and streams partial text via callback.
+// Wraps @qvac/sdk Whisper transcription.
+//
+// Accepts a raw f32le PCM Buffer (16kHz mono) — the same format the SDK
+// example uses for real-time streaming. AudioRecorder produces this format.
+//
+// transcribeStream() yields text tokens progressively as Whisper processes the
+// audio. Combined with fast VAD-based recording stop, this is as close to
+// real-time as possible without raw frame access during recording.
 
 import { loadModel, transcribeStream, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
+import type { ISttService } from './types';
 
 export interface SttLoadConfig {
   modelConstant: { src: string; modelId: string };
@@ -15,7 +22,9 @@ export interface SttLoadConfig {
   useGpu: boolean;
 }
 
-class SttServiceClass {
+const BLANK_AUDIO_MARKER = '[BLANK_AUDIO]';
+
+class SttServiceClass implements ISttService {
   private modelId: string | null = null;
 
   get isLoaded(): boolean {
@@ -37,6 +46,8 @@ class SttServiceClass {
         n_threads: config.nThreads,
         suppress_blank: true,
         suppress_nst: true,
+        // f32le is the raw format we produce in AudioRecorder
+        audio_format: 'f32le',
         vad_params: {
           threshold: config.vadThreshold,
           min_speech_duration_ms: config.vadMinSpeechDurationMs,
@@ -50,20 +61,26 @@ class SttServiceClass {
     });
   }
 
-  // Transcribes a WAV file and streams partial text via onPartial.
-  // Returns the final complete text.
-  async transcribe(
-    audioFilePath: string,
+  /**
+   * Transcribes a raw f32le PCM Buffer.
+   * Yields partial text progressively via onPartial as Whisper processes.
+   * Returns the final trimmed text.
+   */
+  async transcribeBuffer(
+    pcmF32le: Buffer,
     onPartial: (text: string) => void,
   ): Promise<string> {
     if (!this.modelId) throw new Error('STT model not loaded');
+
     let fullText = '';
     for await (const chunk of transcribeStream({
       modelId: this.modelId,
-      audioChunk: audioFilePath,
+      audioChunk: pcmF32le,
     })) {
-      fullText += chunk;
-      onPartial(fullText.trim());
+      if (!chunk.includes(BLANK_AUDIO_MARKER)) {
+        fullText += chunk;
+        onPartial(fullText.trim());
+      }
     }
     return fullText.trim();
   }

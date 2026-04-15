@@ -1,9 +1,10 @@
 // ─── TTS Service ─────────────────────────────────────────────────────────────
-// Wraps @qvac/sdk TTS (Supertonic ONNX) with load/synthesize/unload lifecycle.
+// Wraps @qvac/sdk TTS (Supertonic ONNX) implementing ITtsService.
 // Converts the SDK's Int16 PCM output to Float32Array for AudioPlayer.
 
 import { loadModel, textToSpeech, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
+import type { ITtsService } from './types';
 
 export interface TtsLoadConfig {
   tokenizerSrc: string;
@@ -17,7 +18,7 @@ export interface TtsLoadConfig {
   useGpu: boolean;
 }
 
-class TtsServiceClass {
+class TtsServiceClass implements ITtsService {
   private modelId: string | null = null;
   private _sampleRate = 44100;
 
@@ -54,14 +55,19 @@ class TtsServiceClass {
     });
   }
 
-  // Synthesizes text and returns Float32Array PCM samples (normalized from Int16).
+  // Synthesizes text and returns Float32Array PCM (normalized from Int16 SDK output).
   async synthesize(text: string): Promise<Float32Array> {
     if (!this.modelId) throw new Error('TTS model not loaded');
 
-    const result = textToSpeech({ modelId: this.modelId, text, inputType: 'text', stream: false });
+    const result = textToSpeech({
+      modelId: this.modelId,
+      text,
+      inputType: 'text',
+      stream: false,
+    });
     const int16Samples = await result.buffer;
 
-    // Convert Int16 samples [-32768, 32767] to Float32 [-1.0, 1.0]
+    // Convert Int16 samples [-32768, 32767] → Float32 [-1.0, 1.0]
     const float32 = new Float32Array(int16Samples.length);
     for (let i = 0; i < int16Samples.length; i++) {
       float32[i] = (int16Samples[i] ?? 0) / 32768;

@@ -1,9 +1,10 @@
 // ─── LLM Service ─────────────────────────────────────────────────────────────
-// Wraps @qvac/sdk LLM completion (llama.cpp) with load/generate/cancel/unload.
+// Wraps @qvac/sdk completion (llama.cpp) implementing ILlmService.
 // Streams tokens via callback for low-latency UI updates.
 
 import { loadModel, completion, cancel, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
+import type { ILlmService, ConversationMessage } from './types';
 
 export interface LlmLoadConfig {
   modelConstant: { src: string; modelId: string };
@@ -14,9 +15,7 @@ export interface LlmLoadConfig {
   useGpu: boolean;
 }
 
-export type ConversationMessage = { role: string; content: string };
-
-class LlmServiceClass {
+class LlmServiceClass implements ILlmService {
   private modelId: string | null = null;
 
   get isLoaded(): boolean {
@@ -43,8 +42,6 @@ class LlmServiceClass {
     });
   }
 
-  // Generates a completion and streams tokens via onToken.
-  // Returns the full response text.
   async generate(
     history: ConversationMessage[],
     onToken: (token: string) => void,
@@ -65,7 +62,6 @@ class LlmServiceClass {
     return fullText;
   }
 
-  // Cancels the current in-flight generation.
   cancelGeneration(): void {
     if (!this.modelId) return;
     void cancel({ operation: 'inference', modelId: this.modelId });
