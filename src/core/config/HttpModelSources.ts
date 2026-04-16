@@ -45,6 +45,11 @@ export const QWEN3_4B_HTTP = {
 } as const;
 
 // ─── Supertonic TTS (onnx-community/Supertonic-TTS-ONNX) ────────────────────
+// Supertonic ONNX models are split into .onnx (graph) + .onnx_data (weights).
+// The SDK's default HTTP downloader saves files with hash prefixes, preventing
+// ONNX Runtime from finding companion .onnx_data files. The HTTP fallback uses
+// a custom downloader (downloadTtsWithCompanions) that places all files in the
+// same directory with original filenames so ONNX Runtime can resolve them.
 
 const TTS_REPO = 'onnx-community/Supertonic-TTS-ONNX';
 const TTS_COMMIT = 'cff123c84b0655d9d647641f1b532c3cbb8f7faa';
@@ -52,8 +57,11 @@ const TTS_COMMIT = 'cff123c84b0655d9d647641f1b532c3cbb8f7faa';
 export const SUPERTONIC_HTTP = {
   tokenizer: hfResolve(TTS_REPO, TTS_COMMIT, 'tokenizer.json'),
   textEncoder: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/text_encoder.onnx'),
+  textEncoderData: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/text_encoder.onnx_data'),
   latentDenoiser: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/latent_denoiser.onnx'),
+  latentDenoiserData: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/latent_denoiser.onnx_data'),
   voiceDecoder: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/voice_decoder.onnx'),
+  voiceDecoderData: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/voice_decoder.onnx_data'),
   voiceStyle: hfResolve(TTS_REPO, TTS_COMMIT, 'voices/F1.bin'),
 } as const;
 

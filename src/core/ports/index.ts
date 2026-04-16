@@ -1,7 +1,31 @@
-// ---- Core Ports (re-exports) ---------------------------------------------
-// Only abstractions that genuinely vary between platforms AND share consumer
-// code (the pipeline) belong here. Everything else uses platform APIs directly.
+// ─── Core Ports Barrel ───────────────────────────────────────────────────────
+// Platform-agnostic abstractions consumed by the core layer. Adapters live in
+// `src/platform/<target>/` and are wired up through the platform bootstrap.
 
-export type { IAudioRecorder, RecordingResult, AudioRecorderCallbacks, AudioRecorderState } from './IAudioRecorder';
+export type {
+  IAudioRecorder,
+  RecordingResult,
+  AudioRecorderCallbacks,
+  AudioRecorderState,
+} from './IAudioRecorder';
 export type { IAudioPlayer } from './IAudioPlayer';
-export type { ISttService, ILlmService, ITtsService, ConversationMessage, ProgressCallback } from '../inference/types';
+export type {
+  IFileSystem,
+  FileInfo,
+  DownloadOptions,
+  DownloadProgressEvent,
+  DownloadProgressListener,
+} from './IFileSystem';
+export type { IKeyValueStore } from './IKeyValueStore';
+export type {
+  IDatabase,
+  SqlParam,
+  SqlRow,
+} from './IDatabase';
+export type {
+  ISttService,
+  ILlmService,
+  ITtsService,
+  ConversationMessage,
+  ProgressCallback,
+} from '../inference/types';

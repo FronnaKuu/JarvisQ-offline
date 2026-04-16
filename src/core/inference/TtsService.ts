@@ -4,8 +4,14 @@
 
 import { loadModel, textToSpeech, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
-import { loadModelWithFallback } from '@core/utils/loadWithFallback';
+import { loadWithStallDetection } from '@core/utils/loadWithFallback';
 import type { LoadModelArgs } from '@core/utils/loadWithFallback';
+import {
+  downloadTtsWithCompanions,
+  type TtsCompanionSources,
+  type TtsLocalPaths,
+} from '@core/utils/downloadTtsWithCompanions';
+import type { IFileSystem } from '@core/ports/IFileSystem';
 import type { ITtsService } from './types';
 
 export interface TtsLoadConfig {
@@ -18,6 +24,15 @@ export interface TtsLoadConfig {
   speed: number;
   sampleRate: number;
   useGpu: boolean;
+  /**
+   * Optional HTTP fallback sources including .onnx_data companion files.
+   * When provided and the primary load stalls, all files (including companions)
+   * are downloaded to a dedicated directory with original filenames, then
+   * passed to loadModel as local paths. Required for Supertonic TTS HTTP
+   * fallback because the SDK's default HTTP downloader strips filenames via
+   * hash prefixing, breaking ONNX Runtime's companion file resolution.
+   */
+  httpCompanionSources?: TtsCompanionSources;
 }
 
 class TtsServiceClass implements ITtsService {
@@ -34,27 +49,42 @@ class TtsServiceClass implements ITtsService {
 
   async load(
     config: TtsLoadConfig,
+    deps: { fileSystem: IFileSystem },
     onProgress?: (p: ModelProgressUpdate) => void,
-    httpFallbackConfig?: TtsLoadConfig,
   ): Promise<void> {
     if (this.modelId) await this.unload();
 
     this._sampleRate = config.sampleRate;
 
     const primary = buildLoadModelArgs(config);
-    const fallback = httpFallbackConfig
-      ? buildLoadModelArgs(httpFallbackConfig)
-      : undefined;
 
-    if (fallback) {
-      this.modelId = await loadModelWithFallback({
-        primary,
-        httpFallback: fallback,
-        onProgress,
-      });
-    } else {
-      this.modelId = await (loadModel as Function)({ ...primary, onProgress });
+    try {
+      this.modelId = await loadWithStallDetection(primary, onProgress);
+      return;
+    } catch (err) {
+      const isStall =
+        err instanceof Error && err.message === 'DOWNLOAD_STALLED';
+      if (!isStall || !config.httpCompanionSources) throw err;
+      console.warn(
+        '[TtsService] P2P download stalled, switching to HTTPS companion fallback',
+      );
     }
+
+    // HTTP fallback: pre-download .onnx + .onnx_data companions with original
+    // filenames so ONNX Runtime can resolve them, then pass local paths.
+    const localPaths = await downloadTtsWithCompanions(
+      deps.fileSystem,
+      config.httpCompanionSources,
+      onProgress,
+    );
+    const fallbackArgs = buildLoadModelArgs({
+      ...config,
+      ...localPathsToConfig(localPaths),
+    });
+    this.modelId = await (loadModel as Function)({
+      ...fallbackArgs,
+      onProgress,
+    });
   }
 
   // Synthesizes text and returns Float32Array PCM (normalized from Int16 SDK output).
@@ -85,6 +115,16 @@ class TtsServiceClass implements ITtsService {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function localPathsToConfig(p: TtsLocalPaths): Partial<TtsLoadConfig> {
+  return {
+    tokenizerSrc: p.tokenizerPath,
+    textEncoderSrc: p.textEncoderPath,
+    latentDenoiserSrc: p.latentDenoiserPath,
+    voiceDecoderSrc: p.voiceDecoderPath,
+    voiceSrc: p.voiceStylePath,
+  };
+}
 
 function buildLoadModelArgs(config: TtsLoadConfig): LoadModelArgs {
   return {

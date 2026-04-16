@@ -286,8 +286,8 @@ export interface TtsProfile {
 export const TTS_PROFILES: Record<string, TtsProfile> = {
   supertonic_en: {
     id: 'supertonic_en',
-    label: 'Supertonic TTS (~180 MB)',
-    estimatedBytes: 182_000_000,
+    label: 'Supertonic TTS (~250 MB)',
+    estimatedBytes: 251_000_000,
     sampleRate: 44100,
     buildLoadConfig: (useGpu, speed, language) => ({
       tokenizerSrc: TTS_TOKENIZER_SUPERTONIC.src,
@@ -299,17 +299,19 @@ export const TTS_PROFILES: Record<string, TtsProfile> = {
       speed,
       sampleRate: 44100,
       useGpu,
-    }),
-    buildHttpFallbackConfig: (useGpu, speed, language) => ({
-      tokenizerSrc: SUPERTONIC_HTTP.tokenizer,
-      textEncoderSrc: SUPERTONIC_HTTP.textEncoder,
-      latentDenoiserSrc: SUPERTONIC_HTTP.latentDenoiser,
-      voiceDecoderSrc: SUPERTONIC_HTTP.voiceDecoder,
-      voiceSrc: SUPERTONIC_HTTP.voiceStyle,
-      language,
-      speed,
-      sampleRate: 44100,
-      useGpu,
+      // HTTPS fallback: pre-downloads .onnx + .onnx_data with original filenames
+      // so ONNX Runtime can resolve companion weights (the SDK's built-in HTTP
+      // downloader hash-prefixes filenames, which breaks companion resolution).
+      httpCompanionSources: {
+        tokenizer: SUPERTONIC_HTTP.tokenizer,
+        textEncoder: SUPERTONIC_HTTP.textEncoder,
+        textEncoderData: SUPERTONIC_HTTP.textEncoderData,
+        latentDenoiser: SUPERTONIC_HTTP.latentDenoiser,
+        latentDenoiserData: SUPERTONIC_HTTP.latentDenoiserData,
+        voiceDecoder: SUPERTONIC_HTTP.voiceDecoder,
+        voiceDecoderData: SUPERTONIC_HTTP.voiceDecoderData,
+        voiceStyle: SUPERTONIC_HTTP.voiceStyle,
+      },
     }),
   },
 };

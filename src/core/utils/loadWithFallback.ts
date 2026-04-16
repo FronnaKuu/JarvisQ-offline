@@ -59,7 +59,7 @@ export async function loadModelWithFallback(
 
 // ─── Internal ────────────────────────────────────────────────────────────────
 
-function loadWithStallDetection(
+export function loadWithStallDetection(
   args: LoadModelArgs,
   onProgress?: (p: ModelProgressUpdate) => void,
 ): Promise<string> {

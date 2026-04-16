@@ -17,6 +17,7 @@ import {
 import { SttService } from '@core/inference/SttService';
 import { LlmService } from '@core/inference/LlmService';
 import { TtsService } from '@core/inference/TtsService';
+import { getPlatform } from '@core/platform/PlatformContainer';
 import { useConversationStore } from '@domain/ConversationStore';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { AppTheme } from '@ui/theme/theme';
@@ -101,12 +102,12 @@ export default function SetupScreen() {
       setStatusText(`Downloading ${ttsProfile.label}...`);
       await TtsService.load(
         ttsProfile.buildLoadConfig(settings.useGpu, settings.ttsSpeed, 'en'),
+        { fileSystem: getPlatform().fileSystem },
         (p) => {
           if (isMounted.current) {
             setTtsProgress(sdkProgressToDownloadProgress(p, ttsProfile.label));
           }
         },
-        ttsProfile.buildHttpFallbackConfig?.(settings.useGpu, settings.ttsSpeed, 'en'),
       );
       if (isMounted.current) setTtsDone(true);
 

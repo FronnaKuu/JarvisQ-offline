@@ -1,20 +1,12 @@
-// ---- Message Repository --------------------------------------------------
+// ─── Message Repository ──────────────────────────────────────────────────────
 
-import { getDatabase, rowToMessage } from '../database';
+import { getDatabase, rowToMessage, type MessageRow } from '../database';
 import type { Message } from '@domain/types';
 
 export async function getMessagesByConversation(
   conversationId: string,
 ): Promise<Message[]> {
-  const db = await getDatabase();
-  const rows = await db.getAllAsync<{
-    id: string;
-    conversation_id: string;
-    role: 'user' | 'assistant';
-    text: string;
-    timestamp_ms: number;
-    is_streaming: number;
-  }>(
+  const rows = await getDatabase().getAll<MessageRow>(
     'SELECT * FROM messages WHERE conversation_id = ? ORDER BY timestamp_ms ASC',
     [conversationId],
   );
@@ -22,8 +14,7 @@ export async function getMessagesByConversation(
 }
 
 export async function insertMessage(message: Message): Promise<void> {
-  const db = await getDatabase();
-  await db.runAsync(
+  await getDatabase().run(
     `INSERT INTO messages
        (id, conversation_id, role, text, timestamp_ms, is_streaming)
      VALUES (?, ?, ?, ?, ?, ?)`,
@@ -43,8 +34,7 @@ export async function updateMessageText(
   text: string,
   isStreaming: boolean,
 ): Promise<void> {
-  const db = await getDatabase();
-  await db.runAsync(
+  await getDatabase().run(
     'UPDATE messages SET text = ?, is_streaming = ? WHERE id = ?',
     [text, isStreaming ? 1 : 0, id],
   );
@@ -53,8 +43,7 @@ export async function updateMessageText(
 export async function deleteMessagesByConversation(
   conversationId: string,
 ): Promise<void> {
-  const db = await getDatabase();
-  await db.runAsync(
+  await getDatabase().run(
     'DELETE FROM messages WHERE conversation_id = ?',
     [conversationId],
   );

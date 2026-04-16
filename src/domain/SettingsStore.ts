@@ -1,9 +1,12 @@
-// ---- Settings Store (Zustand) --------------------------------------------
+// ─── Settings Store (Zustand) ────────────────────────────────────────────────
+// Persists user preferences through the IKeyValueStore port. The concrete KV
+// adapter is resolved from the platform container, so the store stays free of
+// platform-specific imports.
 
 import { create } from 'zustand';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AppSettings } from './types';
 import { AppConfig } from '@core/config/AppConfig';
+import { getPlatform } from '@core/platform/PlatformContainer';
 import {
   DEFAULT_STT_PROFILE_ID,
   DEFAULT_LLM_PROFILE_ID,
@@ -53,8 +56,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   loadSettings: async () => {
     try {
       const [rawSettings, rawIds] = await Promise.all([
-        AsyncStorage.getItem(SETTINGS_KEY),
-        AsyncStorage.getItem(MODEL_IDS_KEY),
+        getPlatform().keyValueStore.getItem(SETTINGS_KEY),
+        getPlatform().keyValueStore.getItem(MODEL_IDS_KEY),
       ]);
       const settings = rawSettings
         ? { ...defaultSettings, ...(JSON.parse(rawSettings) as Partial<AppSettings>) }
@@ -70,13 +73,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   updateSettings: async (fields) => {
     const next = { ...get().settings, ...fields };
-    await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    await getPlatform().keyValueStore.setItem(SETTINGS_KEY, JSON.stringify(next));
     set({ settings: next });
   },
 
   updateModelIds: async (ids) => {
     const next = { ...get().modelIds, ...ids };
-    await AsyncStorage.setItem(MODEL_IDS_KEY, JSON.stringify(next));
+    await getPlatform().keyValueStore.setItem(MODEL_IDS_KEY, JSON.stringify(next));
     set({ modelIds: next });
   },
 }));

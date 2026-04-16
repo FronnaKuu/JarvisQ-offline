@@ -1,48 +1,34 @@
-// ---- Conversation Repository ---------------------------------------------
+// ─── Conversation Repository ─────────────────────────────────────────────────
 
-import { getDatabase, rowToConversation } from '../database';
+import {
+  getDatabase,
+  rowToConversation,
+  type ConversationRow,
+} from '../database';
 import type { Conversation } from '@domain/types';
 import { AppConfig } from '@core/config/AppConfig';
 
 export async function getAllConversations(): Promise<Conversation[]> {
-  const db = await getDatabase();
-  const rows = await db.getAllAsync<{
-    id: string;
-    title: string;
-    created_at: number;
-    last_updated_at: number;
-    system_prompt: string;
-    max_context_turns: number;
-    temperature: number;
-    tts_speed: number;
-    max_response_tokens: number;
-  }>('SELECT * FROM conversations ORDER BY last_updated_at DESC');
+  const rows = await getDatabase().getAll<ConversationRow>(
+    'SELECT * FROM conversations ORDER BY last_updated_at DESC',
+  );
   return rows.map(rowToConversation);
 }
 
 export async function getConversationById(
   id: string,
 ): Promise<Conversation | null> {
-  const db = await getDatabase();
-  const row = await db.getFirstAsync<{
-    id: string;
-    title: string;
-    created_at: number;
-    last_updated_at: number;
-    system_prompt: string;
-    max_context_turns: number;
-    temperature: number;
-    tts_speed: number;
-    max_response_tokens: number;
-  }>('SELECT * FROM conversations WHERE id = ?', [id]);
+  const row = await getDatabase().getFirst<ConversationRow>(
+    'SELECT * FROM conversations WHERE id = ?',
+    [id],
+  );
   return row ? rowToConversation(row) : null;
 }
 
 export async function insertConversation(
   conversation: Conversation,
 ): Promise<void> {
-  const db = await getDatabase();
-  await db.runAsync(
+  await getDatabase().run(
     `INSERT INTO conversations
        (id, title, created_at, last_updated_at, system_prompt,
         max_context_turns, temperature, tts_speed, max_response_tokens)
@@ -65,7 +51,6 @@ export async function updateConversation(
   id: string,
   fields: Partial<Omit<Conversation, 'id' | 'createdAt'>>,
 ): Promise<void> {
-  const db = await getDatabase();
   const now = Date.now();
   const entries = Object.entries({
     ...fields,
@@ -86,17 +71,16 @@ export async function updateConversation(
   const setClauses = entries
     .map(([k]) => `${columnMap[k] ?? k} = ?`)
     .join(', ');
-  const values = entries.map(([, v]) => v);
+  const values = entries.map(([, v]) => v) as (string | number | boolean | null)[];
 
-  await db.runAsync(
+  await getDatabase().run(
     `UPDATE conversations SET ${setClauses} WHERE id = ?`,
     [...values, id],
   );
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  const db = await getDatabase();
-  await db.runAsync('DELETE FROM conversations WHERE id = ?', [id]);
+  await getDatabase().run('DELETE FROM conversations WHERE id = ?', [id]);
 }
 
 export function makeNewConversation(): Conversation {
