@@ -76,9 +76,12 @@ src/
 ├── data/          Repositories + row mappers (depend on IDatabase only)
 ├── domain/        Zustand stores + domain types
 ├── platform/
-│   └── mobile/      Expo adapters (ExpoAudioRecorder, ExpoFileSystem,
-│                    ExpoSqliteDatabase, AsyncStorageKeyValueStore,
-│                    bootstrap.ts — registers adapters into the container)
+│   ├── mobile/      Expo adapters (ExpoAudioRecorder, ExpoFileSystem,
+│   │                ExpoSqliteDatabase, AsyncStorageKeyValueStore,
+│   │                bootstrap.ts — registers adapters into the container)
+│   └── desktop/     Node adapters (NodeFileSystem, JsonFileKeyValueStore,
+│                    NodeSqliteDatabase) — scaffold ready; audio backend
+│                    (Electron / Tauri / Pear) still to be chosen
 └── ui/            Reusable components + theme
 ```
 
@@ -108,6 +111,22 @@ src/
    `VoicePipeline` (mirrors `src/platform/mobile/Platform.ts`).
 
 The core, repositories, and UI logic do not need to change.
+
+### Desktop status (Windows / macOS / Linux)
+
+The desktop adapter set under `src/platform/desktop/` is scaffolded and
+covers three of the five ports using only Node 20+ built-ins (zero native
+dependencies):
+
+- `NodeFileSystem` — `node:fs/promises` + `node:https` with range + redirects.
+- `JsonFileKeyValueStore` — atomic JSON-file persistence under the OS
+  app-data directory (`%APPDATA%`, `~/Library/Application Support`,
+  `$XDG_DATA_HOME`).
+- `NodeSqliteDatabase` — `node:sqlite` (stable in Node 22+).
+
+Audio (`IAudioRecorder` / `IAudioPlayer`) is deliberately not implemented
+yet — it depends on the shell (Electron, Tauri, Pear, plain Node CLI). See
+`src/platform/desktop/audio/README.md` for the decision matrix.
 
 ---
 
