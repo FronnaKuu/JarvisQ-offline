@@ -1,10 +1,13 @@
 // ─── Model Configuration ─────────────────────────────────────────────────────
-// Centralizes model selection and load parameters using @qvac/sdk model registry.
-// All model constants come from the SDK — no manual URLs or file management needed.
+// Centralizes model selection, load parameters, and HTTPS fallback URLs.
+// Primary sources use the @qvac/sdk registry (P2P). Each profile also provides
+// an HTTP fallback configuration for resilience when P2P peers are unavailable.
 
 import {
   WHISPER_BASE_Q8_0,
   WHISPER_TINY_Q8_0,
+  WHISPER_SMALL_Q8_0,
+  WHISPER_LARGE_V3_TURBO,
   QWEN3_1_7B_INST_Q4,
   QWEN3_4B_INST_Q4_K_M,
   TTS_TOKENIZER_SUPERTONIC,
@@ -12,9 +15,23 @@ import {
   TTS_LATENT_DENOISER_SUPERTONIC_FP32,
   TTS_VOICE_DECODER_SUPERTONIC_FP32,
   TTS_VOICE_STYLE_SUPERTONIC,
+  PARAKEET_TDT_ENCODER_INT8,
+  PARAKEET_TDT_DECODER_INT8,
+  PARAKEET_TDT_PREPROCESSOR_INT8,
+  PARAKEET_TDT_ENCODER_FP32,
+  PARAKEET_TDT_ENCODER_DATA_FP32,
+  PARAKEET_TDT_DECODER_FP32,
+  PARAKEET_TDT_PREPROCESSOR_FP32,
+  PARAKEET_TDT_VOCAB,
 } from '@qvac/sdk';
 import { AppConfig } from './AppConfig';
-import type { SttLoadConfig } from '@core/inference/SttService';
+import {
+  PARAKEET_HTTP,
+  QWEN3_HTTP,
+  SUPERTONIC_HTTP,
+  WHISPER_HTTP,
+} from './HttpModelSources';
+import type { SttLoadConfig, WhisperSttLoadConfig } from '@core/inference/SttService';
 import type { LlmLoadConfig } from '@core/inference/LlmService';
 import type { TtsLoadConfig } from '@core/inference/TtsService';
 
@@ -25,6 +42,7 @@ export interface SttProfile {
   label: string;
   estimatedBytes: number;
   buildLoadConfig: (useGpu: boolean, language: string) => SttLoadConfig;
+  buildHttpFallbackConfig?: (useGpu: boolean, language: string) => SttLoadConfig;
 }
 
 export const STT_PROFILES: Record<string, SttProfile> = {
@@ -32,8 +50,19 @@ export const STT_PROFILES: Record<string, SttProfile> = {
     id: 'whisper_base',
     label: 'Whisper Base Q8 (~150 MB)',
     estimatedBytes: 153_000_000,
-    buildLoadConfig: (useGpu, language) => ({
+    buildLoadConfig: (useGpu, language): WhisperSttLoadConfig => ({
+      engine: 'whisper',
       modelConstant: WHISPER_BASE_Q8_0,
+      language,
+      nThreads: AppConfig.stt.nThreads,
+      vadThreshold: AppConfig.stt.vadThreshold,
+      vadMinSpeechDurationMs: AppConfig.stt.vadMinSpeechDurationMs,
+      vadMinSilenceDurationMs: AppConfig.stt.vadMinSilenceDurationMs,
+      useGpu,
+    }),
+    buildHttpFallbackConfig: (useGpu, language): WhisperSttLoadConfig => ({
+      engine: 'whisper',
+      modelConstant: { src: WHISPER_HTTP.baseQ8, modelId: 'ggml-base-q8_0.bin' },
       language,
       nThreads: AppConfig.stt.nThreads,
       vadThreshold: AppConfig.stt.vadThreshold,
@@ -46,7 +75,8 @@ export const STT_PROFILES: Record<string, SttProfile> = {
     id: 'whisper_tiny',
     label: 'Whisper Tiny (~40 MB)',
     estimatedBytes: 42_000_000,
-    buildLoadConfig: (useGpu, language) => ({
+    buildLoadConfig: (useGpu, language): WhisperSttLoadConfig => ({
+      engine: 'whisper',
       modelConstant: WHISPER_TINY_Q8_0,
       language,
       nThreads: AppConfig.stt.nThreads,
@@ -55,10 +85,122 @@ export const STT_PROFILES: Record<string, SttProfile> = {
       vadMinSilenceDurationMs: AppConfig.stt.vadMinSilenceDurationMs,
       useGpu,
     }),
+    buildHttpFallbackConfig: (useGpu, language): WhisperSttLoadConfig => ({
+      engine: 'whisper',
+      modelConstant: { src: WHISPER_HTTP.tinyQ8, modelId: 'ggml-tiny-q8_0.bin' },
+      language,
+      nThreads: AppConfig.stt.nThreads,
+      vadThreshold: AppConfig.stt.vadThreshold,
+      vadMinSpeechDurationMs: AppConfig.stt.vadMinSpeechDurationMs,
+      vadMinSilenceDurationMs: AppConfig.stt.vadMinSilenceDurationMs,
+      useGpu,
+    }),
+  },
+  whisper_small: {
+    id: 'whisper_small',
+    label: 'Whisper Small Q8 — multilingual (~490 MB)',
+    estimatedBytes: 490_000_000,
+    buildLoadConfig: (useGpu, language): WhisperSttLoadConfig => ({
+      engine: 'whisper',
+      modelConstant: WHISPER_SMALL_Q8_0,
+      language,
+      nThreads: AppConfig.stt.nThreads,
+      vadThreshold: AppConfig.stt.vadThreshold,
+      vadMinSpeechDurationMs: AppConfig.stt.vadMinSpeechDurationMs,
+      vadMinSilenceDurationMs: AppConfig.stt.vadMinSilenceDurationMs,
+      useGpu,
+    }),
+    buildHttpFallbackConfig: (useGpu, language): WhisperSttLoadConfig => ({
+      engine: 'whisper',
+      modelConstant: { src: WHISPER_HTTP.smallQ8, modelId: 'ggml-small-q8_0.bin' },
+      language,
+      nThreads: AppConfig.stt.nThreads,
+      vadThreshold: AppConfig.stt.vadThreshold,
+      vadMinSpeechDurationMs: AppConfig.stt.vadMinSpeechDurationMs,
+      vadMinSilenceDurationMs: AppConfig.stt.vadMinSilenceDurationMs,
+      useGpu,
+    }),
+  },
+  whisper_large_v3_turbo: {
+    id: 'whisper_large_v3_turbo',
+    label: 'Whisper Large V3 Turbo — best quality (~1.6 GB)',
+    estimatedBytes: 1_600_000_000,
+    buildLoadConfig: (useGpu, language): WhisperSttLoadConfig => ({
+      engine: 'whisper',
+      modelConstant: WHISPER_LARGE_V3_TURBO,
+      language,
+      nThreads: AppConfig.stt.nThreads,
+      vadThreshold: AppConfig.stt.vadThreshold,
+      vadMinSpeechDurationMs: AppConfig.stt.vadMinSpeechDurationMs,
+      vadMinSilenceDurationMs: AppConfig.stt.vadMinSilenceDurationMs,
+      useGpu,
+    }),
+    buildHttpFallbackConfig: (useGpu, language): WhisperSttLoadConfig => ({
+      engine: 'whisper',
+      modelConstant: { src: WHISPER_HTTP.largeV3Turbo, modelId: 'ggml-large-v3-turbo.bin' },
+      language,
+      nThreads: AppConfig.stt.nThreads,
+      vadThreshold: AppConfig.stt.vadThreshold,
+      vadMinSpeechDurationMs: AppConfig.stt.vadMinSpeechDurationMs,
+      vadMinSilenceDurationMs: AppConfig.stt.vadMinSilenceDurationMs,
+      useGpu,
+    }),
+  },
+  // Parakeet TDT 0.6B v3 — INT8 quantized (~670 MB via HTTPS).
+  // Based on nvidia/parakeet-tdt-0.6b-v3 via istupakov/parakeet-tdt-0.6b-v3-onnx.
+  // Supports 25 languages. Faster than Whisper on mobile hardware.
+  parakeet_tdt_int8: {
+    id: 'parakeet_tdt_int8',
+    label: 'Parakeet TDT v3 INT8 — 25 languages (~670 MB)',
+    estimatedBytes: 670_000_000,
+    buildLoadConfig: (useGpu, _language) => ({
+      engine: 'parakeet',
+      modelType: 'tdt' as const,
+      modelSrc: PARAKEET_TDT_ENCODER_INT8,
+      decoderSrc: PARAKEET_TDT_DECODER_INT8,
+      preprocessorSrc: PARAKEET_TDT_PREPROCESSOR_INT8,
+      vocabSrc: PARAKEET_TDT_VOCAB,
+      useGpu,
+    }),
+    buildHttpFallbackConfig: (useGpu, _language) => ({
+      engine: 'parakeet',
+      modelType: 'tdt' as const,
+      modelSrc: { src: PARAKEET_HTTP.encoderInt8 },
+      decoderSrc: { src: PARAKEET_HTTP.decoderInt8 },
+      preprocessorSrc: { src: PARAKEET_HTTP.preprocessor },
+      vocabSrc: { src: PARAKEET_HTTP.vocab },
+      useGpu,
+    }),
+  },
+  // Parakeet TDT 0.6B v3 — full FP32 precision (~2.5 GB via HTTPS).
+  parakeet_tdt_fp32: {
+    id: 'parakeet_tdt_fp32',
+    label: 'Parakeet TDT v3 FP32 — 25 languages, best quality (~2.5 GB)',
+    estimatedBytes: 2_500_000_000,
+    buildLoadConfig: (useGpu, _language) => ({
+      engine: 'parakeet',
+      modelType: 'tdt' as const,
+      modelSrc: PARAKEET_TDT_ENCODER_FP32,
+      encoderDataSrc: PARAKEET_TDT_ENCODER_DATA_FP32,
+      decoderSrc: PARAKEET_TDT_DECODER_FP32,
+      preprocessorSrc: PARAKEET_TDT_PREPROCESSOR_FP32,
+      vocabSrc: PARAKEET_TDT_VOCAB,
+      useGpu,
+    }),
+    buildHttpFallbackConfig: (useGpu, _language) => ({
+      engine: 'parakeet',
+      modelType: 'tdt' as const,
+      modelSrc: { src: PARAKEET_HTTP.encoderFp32 },
+      encoderDataSrc: { src: PARAKEET_HTTP.encoderDataFp32 },
+      decoderSrc: { src: PARAKEET_HTTP.decoderFp32 },
+      preprocessorSrc: { src: PARAKEET_HTTP.preprocessor },
+      vocabSrc: { src: PARAKEET_HTTP.vocab },
+      useGpu,
+    }),
   },
 };
 
-export const DEFAULT_STT_PROFILE_ID = 'whisper_base';
+export const DEFAULT_STT_PROFILE_ID = 'parakeet_tdt_int8';
 
 // ─── LLM Profiles ─────────────────────────────────────────────────────────────
 
@@ -67,6 +209,12 @@ export interface LlmProfile {
   label: string;
   estimatedBytes: number;
   buildLoadConfig: (
+    useGpu: boolean,
+    systemPrompt: string,
+    temperature: number,
+    maxTokens: number,
+  ) => LlmLoadConfig;
+  buildHttpFallbackConfig?: (
     useGpu: boolean,
     systemPrompt: string,
     temperature: number,
@@ -86,6 +234,16 @@ export const LLM_PROFILES: Record<string, LlmProfile> = {
       maxTokens,
       systemPrompt,
       useGpu,
+      noThink: true,
+    }),
+    buildHttpFallbackConfig: (useGpu, systemPrompt, temperature, maxTokens) => ({
+      modelConstant: { src: QWEN3_HTTP.q4, modelId: 'Qwen3-1.7B-Q4_0.gguf' },
+      contextSize: AppConfig.llm.contextSize,
+      temperature,
+      maxTokens,
+      systemPrompt,
+      useGpu,
+      noThink: true,
     }),
   },
   qwen3_4b: {
@@ -99,6 +257,7 @@ export const LLM_PROFILES: Record<string, LlmProfile> = {
       maxTokens,
       systemPrompt,
       useGpu,
+      noThink: true,
     }),
   },
 };
@@ -117,6 +276,11 @@ export interface TtsProfile {
     speed: number,
     language: 'en' | 'de' | 'es' | 'it',
   ) => TtsLoadConfig;
+  buildHttpFallbackConfig?: (
+    useGpu: boolean,
+    speed: number,
+    language: 'en' | 'de' | 'es' | 'it',
+  ) => TtsLoadConfig;
 }
 
 export const TTS_PROFILES: Record<string, TtsProfile> = {
@@ -131,6 +295,17 @@ export const TTS_PROFILES: Record<string, TtsProfile> = {
       latentDenoiserSrc: TTS_LATENT_DENOISER_SUPERTONIC_FP32.src,
       voiceDecoderSrc: TTS_VOICE_DECODER_SUPERTONIC_FP32.src,
       voiceSrc: TTS_VOICE_STYLE_SUPERTONIC.src,
+      language,
+      speed,
+      sampleRate: 44100,
+      useGpu,
+    }),
+    buildHttpFallbackConfig: (useGpu, speed, language) => ({
+      tokenizerSrc: SUPERTONIC_HTTP.tokenizer,
+      textEncoderSrc: SUPERTONIC_HTTP.textEncoder,
+      latentDenoiserSrc: SUPERTONIC_HTTP.latentDenoiser,
+      voiceDecoderSrc: SUPERTONIC_HTTP.voiceDecoder,
+      voiceSrc: SUPERTONIC_HTTP.voiceStyle,
       language,
       speed,
       sampleRate: 44100,

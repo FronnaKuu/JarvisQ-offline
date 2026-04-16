@@ -7,13 +7,29 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "paths": {
-      "@app/*": ["./src/app/*"],
-      "@features/*": ["./src/features/*"],
-      "@core/*": ["./src/core/*"],
-      "@domain/*": ["./src/domain/*"],
-      "@data/*": ["./src/data/*"],
-      "@ui/*": ["./src/ui/*"]
+      "@app/*": [
+        "./src/app/*"
+      ],
+      "@features/*": [
+        "./src/features/*"
+      ],
+      "@core/*": [
+        "./src/core/*"
+      ],
+      "@domain/*": [
+        "./src/domain/*"
+      ],
+      "@data/*": [
+        "./src/data/*"
+      ],
+      "@ui/*": [
+        "./src/ui/*"
+      ]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.d.ts", "expo-env.d.ts"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.d.ts"
+  ]
 }

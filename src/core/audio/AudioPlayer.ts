@@ -123,16 +123,31 @@ export class AudioPlayer {
       return;
     }
 
-    // Wait for playback to finish
+    // Wait for playback to finish.
+    //
+    // Android (expo-av) can fire isLoaded=false in the very first status
+    // callback — before the sound has actually started — due to an internal
+    // ExoPlayer state-reporting race. Resolving immediately in that case would
+    // return from playAndClear() while audio is still playing, causing the
+    // microphone to pick up the speaker output on the next recording turn.
+    //
+    // Guard: only treat isLoaded=false as "finished" after playback has
+    // actually started (isPlaying was true at least once).
     await new Promise<void>((resolve) => {
+      let playbackHasStarted = false;
       sound.setOnPlaybackStatusUpdate((status) => {
-        if (
-          status.isLoaded &&
-          (status.didJustFinish || !status.isPlaying)
-        ) {
-          if (status.didJustFinish) resolve();
+        if (status.isLoaded) {
+          if (status.isPlaying) playbackHasStarted = true;
+          // didJustFinish is the clean completion signal.
+          if (status.didJustFinish) { resolve(); return; }
+          // isPlaying flipped to false after having been true → stopped/ended.
+          if (playbackHasStarted && !status.isPlaying) { resolve(); return; }
+        } else {
+          // isLoaded=false: sound was unloaded (error or external cleanup).
+          // Only treat as done if playback had started to avoid the Android
+          // early-fire described above.
+          if (playbackHasStarted) resolve();
         }
-        if (!status.isLoaded) resolve();
       });
     });
 

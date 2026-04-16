@@ -73,6 +73,7 @@ export default function SetupScreen() {
             setSttProgress(sdkProgressToDownloadProgress(p, sttProfile.label));
           }
         },
+        sttProfile.buildHttpFallbackConfig?.(settings.useGpu, settings.sttLanguage),
       );
       if (isMounted.current) setSttDone(true);
 
@@ -90,6 +91,12 @@ export default function SetupScreen() {
             setLlmProgress(sdkProgressToDownloadProgress(p, llmProfile.label));
           }
         },
+        llmProfile.buildHttpFallbackConfig?.(
+          settings.useGpu,
+          settings.llmSystemPrompt,
+          settings.llmTemperature,
+          settings.llmMaxTokens,
+        ),
       );
       if (isMounted.current) setLlmDone(true);
 
@@ -102,6 +109,7 @@ export default function SetupScreen() {
             setTtsProgress(sdkProgressToDownloadProgress(p, ttsProfile.label));
           }
         },
+        ttsProfile.buildHttpFallbackConfig?.(settings.useGpu, settings.ttsSpeed, 'en'),
       );
       if (isMounted.current) setTtsDone(true);
 

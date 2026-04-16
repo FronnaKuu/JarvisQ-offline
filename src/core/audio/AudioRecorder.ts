@@ -6,19 +6,21 @@
 //   2. Detect speech start  → amplitude > SPEECH_THRESHOLD_DB
 //   3. Detect speech end    → amplitude < SILENCE_THRESHOLD_DB for SILENCE_MS
 //   4. Auto-stop recording on end-of-speech or hard timeout
-//   5. Read the WAV file and return raw f32le PCM Buffer for transcription
+//   5. Return the recording URI — the @qvac/sdk server-side decoder handles
+//      format conversion (WAV, 3GPP, AAC → f32le PCM) via FFmpegDecoder.
 //
-// The f32le Buffer format is what @qvac/sdk transcribeStream expects.
+// NOTE: On Android, expo-av metering may return null (no hardware support).
+// When that happens, amplitude VAD is disabled and the hard timeout fires.
+// Whisper's internal Silero VAD then filters out silent recordings.
 
 import { Audio } from 'expo-av';
-import * as LegacyFS from 'expo-file-system/legacy';
 import { AppConfig } from '@core/config/AppConfig';
 
 export type RecorderState = 'idle' | 'recording' | 'stopping';
 
 export interface RecordingResult {
-  /** Raw f32le PCM Buffer at 16kHz mono — ready for transcribeStream() */
-  pcmF32le: Buffer;
+  /** File URI of the recorded audio — passed directly to transcribeStream(). */
+  uri: string;
   durationMs: number;
 }
 
@@ -33,7 +35,6 @@ const SILENCE_THRESHOLD_DB = AppConfig.vad.silenceThresholdDb;
 const SPEECH_THRESHOLD_DB = AppConfig.vad.speechThresholdDb;
 const SILENCE_DURATION_MS = AppConfig.vad.silenceDurationMs;
 const LISTEN_TIMEOUT_MS = AppConfig.pipeline.listenTimeoutMs;
-const MIN_SPEECH_DURATION_MS = AppConfig.vad.minSpeechDurationMs;
 
 export class AudioRecorder {
   private recording: Audio.Recording | null = null;
@@ -42,7 +43,10 @@ export class AudioRecorder {
   private listenTimer: ReturnType<typeof setTimeout> | null = null;
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
   private speechDetected = false;
-  private speechStartMs = 0;
+  /** True once we receive at least one non-null metering value from expo-av.
+   *  Some Android devices never return metering (always null); in that case
+   *  we fall back to always transcribing and rely on the STT model's VAD. */
+  private meteringAvailable = false;
   private stopResolve: ((uri: string | null) => void) | null = null;
 
   constructor(callbacks: AudioRecorderCallbacks) {
@@ -56,9 +60,9 @@ export class AudioRecorder {
   // ─── Public API ───────────────────────────────────────────────────────────────
 
   /**
-   * Starts recording. Returns a Promise that resolves with the raw f32le PCM Buffer
+   * Starts recording. Returns a Promise that resolves with the recording URI
    * when speech ends (via VAD silence detection or hard timeout).
-   * Returns null if cancelled or no speech detected.
+   * Returns null only if cancelled or if the recording file couldn't be created.
    */
   async record(): Promise<RecordingResult | null> {
     if (this.state !== 'idle') return null;
@@ -71,7 +75,7 @@ export class AudioRecorder {
 
     this.recording = new Audio.Recording();
     this.speechDetected = false;
-    this.speechStartMs = 0;
+    this.meteringAvailable = false;
 
     await this.recording.prepareToRecordAsync({
       android: {
@@ -102,12 +106,15 @@ export class AudioRecorder {
     this.recording.setOnRecordingStatusUpdate((status) => {
       if (!status.isRecording) return;
 
-      const db = status.metering ?? -160;
+      const rawDb = status.metering;
+      if (rawDb !== null && rawDb !== undefined) {
+        this.meteringAvailable = true;
+      }
+      const db = rawDb ?? -160;
       this.callbacks.onAmplitude(db);
 
       if (db > SPEECH_THRESHOLD_DB && !this.speechDetected) {
         this.speechDetected = true;
-        this.speechStartMs = Date.now() - startTime;
         // Cancel any pending silence timer
         this._clearSilenceTimer();
       }
@@ -140,27 +147,25 @@ export class AudioRecorder {
 
     if (!uri) return null;
 
-    const speechDurationMs = this.speechDetected
-      ? (Date.now() - startTime - this.speechStartMs)
-      : 0;
+    const durationMs = Date.now() - startTime;
 
-    if (!this.speechDetected || speechDurationMs < MIN_SPEECH_DURATION_MS) {
+    // If expo-av metering worked on this device (meteringAvailable = true) but
+    // amplitude never crossed speechThresholdDb, there was genuine silence —
+    // skip transcription to avoid Whisper hallucinations ("Thank you.", etc.).
+    // If metering is unavailable (always null, common on some Android devices),
+    // pass the recording to the STT model anyway and rely on its internal VAD.
+    if (this.meteringAvailable && !this.speechDetected) {
       return null;
     }
 
-    try {
-      const pcmF32le = await this._readWavAsF32le(uri);
-      return { pcmF32le, durationMs: speechDurationMs };
-    } catch {
-      return null;
-    }
+    return { uri, durationMs };
   }
 
   /** Force-stops an in-progress recording without resolving with audio. */
   async abort(): Promise<void> {
     this._clearTimers();
     if (this.recording) {
-      try { await this.recording.stopAndUnloadAsync(); } catch { /* ignore */ }
+      try { await this.recording.stopAndUnloadAsync(); } catch { /* ignore double-stop rejection */ }
       this.recording = null;
     }
     this.stopResolve?.(null);
@@ -182,32 +187,19 @@ export class AudioRecorder {
         uri = this.recording.getURI() ?? null;
         this.recording = null;
       }
-    } catch { /* ignore */ }
+    } catch {
+      // expo-av on Android rejects stopAndUnloadAsync when the native layer
+      // double-calls stop() (first stop succeeds, second fails with
+      // "stop called in an invalid state: 1"). The recording FILE is already
+      // finalized on disk after the first successful stop, so we can still
+      // retrieve the URI here.
+      uri = this.recording?.getURI() ?? null;
+      this.recording = null;
+    }
 
     this.stopResolve?.(uri);
     this.stopResolve = null;
     this._setState('idle');
-  }
-
-  private async _readWavAsF32le(uri: string): Promise<Buffer> {
-    const info = await LegacyFS.getInfoAsync(uri);
-    if (!info.exists) throw new Error('Recording file not found');
-
-    const b64 = await LegacyFS.readAsStringAsync(uri, {
-      encoding: LegacyFS.EncodingType.Base64,
-    });
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-
-    // Skip 44-byte WAV header → raw Int16 PCM @ 16kHz mono
-    const int16 = new Int16Array(bytes.buffer, 44);
-
-    // Convert Int16 → f32le (what Whisper expects)
-    const float32Arr = new Float32Array(int16.length);
-    for (let i = 0; i < int16.length; i++) {
-      float32Arr[i] = (int16[i] ?? 0) / 32768;
-    }
-
-    return Buffer.from(float32Arr.buffer);
   }
 
   private _setState(state: RecorderState): void {

@@ -4,6 +4,8 @@
 
 import { loadModel, textToSpeech, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
+import { loadModelWithFallback } from '@core/utils/loadWithFallback';
+import type { LoadModelArgs } from '@core/utils/loadWithFallback';
 import type { ITtsService } from './types';
 
 export interface TtsLoadConfig {
@@ -33,26 +35,26 @@ class TtsServiceClass implements ITtsService {
   async load(
     config: TtsLoadConfig,
     onProgress?: (p: ModelProgressUpdate) => void,
+    httpFallbackConfig?: TtsLoadConfig,
   ): Promise<void> {
     if (this.modelId) await this.unload();
 
     this._sampleRate = config.sampleRate;
 
-    this.modelId = await loadModel({
-      modelSrc: config.tokenizerSrc,
-      modelType: 'tts',
-      modelConfig: {
-        ttsEngine: 'supertonic' as const,
-        language: config.language,
-        ttsSpeed: config.speed,
-        ttsTokenizerSrc: config.tokenizerSrc,
-        ttsTextEncoderSrc: config.textEncoderSrc,
-        ttsLatentDenoiserSrc: config.latentDenoiserSrc,
-        ttsVoiceDecoderSrc: config.voiceDecoderSrc,
-        ttsVoiceSrc: config.voiceSrc,
-      },
-      onProgress,
-    });
+    const primary = buildLoadModelArgs(config);
+    const fallback = httpFallbackConfig
+      ? buildLoadModelArgs(httpFallbackConfig)
+      : undefined;
+
+    if (fallback) {
+      this.modelId = await loadModelWithFallback({
+        primary,
+        httpFallback: fallback,
+        onProgress,
+      });
+    } else {
+      this.modelId = await (loadModel as Function)({ ...primary, onProgress });
+    }
   }
 
   // Synthesizes text and returns Float32Array PCM (normalized from Int16 SDK output).
@@ -80,6 +82,25 @@ class TtsServiceClass implements ITtsService {
     await unloadModel({ modelId: this.modelId });
     this.modelId = null;
   }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function buildLoadModelArgs(config: TtsLoadConfig): LoadModelArgs {
+  return {
+    modelSrc: config.tokenizerSrc,
+    modelType: 'tts',
+    modelConfig: {
+      ttsEngine: 'supertonic' as const,
+      language: config.language,
+      ttsSpeed: config.speed,
+      ttsTokenizerSrc: config.tokenizerSrc,
+      ttsTextEncoderSrc: config.textEncoderSrc,
+      ttsLatentDenoiserSrc: config.latentDenoiserSrc,
+      ttsVoiceDecoderSrc: config.voiceDecoderSrc,
+      ttsVoiceSrc: config.voiceSrc,
+    },
+  };
 }
 
 export const TtsService = new TtsServiceClass();

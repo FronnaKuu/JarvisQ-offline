@@ -9,6 +9,11 @@ export const AppConfig = {
     minSoftBoundaryChars: 20,
     hardBoundaries: /[.!?;]/,
     softBoundaries: /[,:—]/,
+    // Delay between TTS finishing and microphone re-activating.
+    // Prevents the system from capturing its own speaker output as user speech.
+    // Set to 1500ms: Android speakers can ring/echo for up to ~1s after playback
+    // stops, and the expo-av AudioTrack teardown itself takes ~100–200ms.
+    postSpeakingDelayMs: 1500,
   },
 
   // Amplitude-based VAD (Voice Activity Detection) during recording.

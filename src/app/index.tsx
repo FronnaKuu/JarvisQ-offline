@@ -3,6 +3,9 @@
 import { Redirect } from 'expo-router';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { useConversationStore } from '@domain/ConversationStore';
+import { SttService } from '@core/inference/SttService';
+import { LlmService } from '@core/inference/LlmService';
+import { TtsService } from '@core/inference/TtsService';
 
 export default function Index() {
   const settingsLoaded = useSettingsStore((s) => s.isLoaded);
@@ -14,9 +17,12 @@ export default function Index() {
     return null;
   }
 
-  // If no conversations exist yet, go to setup; otherwise go to conversation
-  if (conversations.length === 0) {
+  // If models aren't loaded in memory (e.g. fresh app start after prior install),
+  // go to setup. The SDK will load from disk cache — no re-download needed.
+  const modelsLoaded = SttService.isLoaded && LlmService.isLoaded && TtsService.isLoaded;
+  if (!modelsLoaded || conversations.length === 0) {
     return <Redirect href="/setup" />;
   }
+
   return <Redirect href="/conversation" />;
 }

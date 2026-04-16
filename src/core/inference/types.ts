@@ -12,9 +12,13 @@ export type ConversationMessage = { role: string; content: string };
 
 export interface ISttService {
   readonly isLoaded: boolean;
-  /** Transcribes a raw f32le PCM Buffer. Yields partial text via onPartial. */
-  transcribeBuffer(
-    pcmF32le: Buffer,
+  /**
+   * Transcribes a recorded audio file (any format — the @qvac/sdk server-side
+   * decoder converts it to f32le PCM before passing to Whisper).
+   * Yields partial text via onPartial.
+   */
+  transcribeFile(
+    uri: string,
     onPartial: (text: string) => void,
   ): Promise<string>;
 }

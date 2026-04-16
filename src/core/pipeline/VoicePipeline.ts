@@ -14,6 +14,7 @@ import { AudioRecorder } from '@core/audio/AudioRecorder';
 import { AudioPlayer } from '@core/audio/AudioPlayer';
 import { ClauseStreamer } from './ClauseStreamer';
 import { AppConfig } from '@core/config/AppConfig';
+import { captureSnapshot, logLlmStart, logLlmDone } from '@core/utils/PerfLogger';
 import type { ISttService, ILlmService, ITtsService, ConversationMessage } from '@core/inference/types';
 import type { PipelinePhase } from '@domain/types';
 
@@ -45,6 +46,7 @@ export class VoicePipeline {
   private phase: PipelinePhase = 'IDLE';
   private isCancelled = false;
   private ttsAborted = false;
+  private isDraining = false;
   private history: ConversationMessage[] = [];
 
   private readonly recorder: AudioRecorder;
@@ -113,17 +115,17 @@ export class VoicePipeline {
       return;
     }
 
-    await this._transcribe(result.pcmF32le);
+    await this._transcribe(result.uri);
   }
 
   // ─── Transcribe phase ─────────────────────────────────────────────────────────
 
-  private async _transcribe(pcmF32le: Buffer): Promise<void> {
+  private async _transcribe(uri: string): Promise<void> {
     this._setPhase('THINKING');
     let finalText = '';
 
     try {
-      finalText = await this.stt.transcribeBuffer(pcmF32le, (partial) => {
+      finalText = await this.stt.transcribeFile(uri, (partial) => {
         if (!this.isCancelled) this.callbacks.onSttPartial(partial);
       });
     } catch (err) {
@@ -148,16 +150,28 @@ export class VoicePipeline {
   private async _generate(userText: string): Promise<void> {
     this._setPhase('THINKING');
 
-    const messages: ConversationMessage[] =
-      this.history.length === 0 && this.config.systemPrompt
-        ? [{ role: 'system', content: this.config.systemPrompt }, ...this.history]
-        : [...this.history];
-    messages.push({ role: 'user', content: userText });
+    // Reset audio player state (clears any leftover stopped flag from prior turn).
+    this.audioPlayer.reset();
+    this.isDraining = false;
+
+    // Always prepend the system prompt so it is applied on every conversation
+    // turn, not just the first one.
+    const messages: ConversationMessage[] = [];
+    if (this.config.systemPrompt) {
+      messages.push({ role: 'system', content: this.config.systemPrompt });
+    }
+    messages.push(...this.history, { role: 'user', content: userText });
 
     let fullResponse = '';
     let llmDone = false;
     const clauses: string[] = [];
     let ttsStarted = false;
+    let tokenCount = 0;
+
+    // Capture performance snapshot and log before generation starts.
+    const perfStart = await captureSnapshot();
+    logLlmStart(perfStart);
+    const llmStartMs = Date.now();
 
     const onQueueEmpty = () => {
       if (llmDone) this._onSpeakingDone(userText, fullResponse);
@@ -175,6 +189,7 @@ export class VoicePipeline {
     try {
       await this.llm.generate(messages, (token) => {
         if (this.isCancelled) return;
+        tokenCount++;
         fullResponse += token;
         this.callbacks.onLlmToken(token);
         streamer.push(token);
@@ -187,6 +202,11 @@ export class VoicePipeline {
       return;
     }
 
+    // Capture end snapshot and log after generation completes.
+    const durationMs = Date.now() - llmStartMs;
+    const perfEnd = await captureSnapshot();
+    logLlmDone(perfStart, perfEnd, durationMs, tokenCount);
+
     streamer.flush();
     llmDone = true;
     this.callbacks.onLlmDone(fullResponse);
@@ -197,33 +217,47 @@ export class VoicePipeline {
   }
 
   // ─── TTS queue ────────────────────────────────────────────────────────────────
+  //
+  // Only one drain loop runs at a time (isDraining guard). ClauseStreamer may
+  // push clauses faster than they can be synthesized; each new call while
+  // draining returns immediately — the active loop will pick up the queued
+  // clauses on its next iteration. A finally-block restart handles the narrow
+  // window where the last clause arrives just as the loop exits.
 
   private async _drainTtsQueue(
     queue: string[],
     onEmpty: () => void,
   ): Promise<void> {
-    if (this.ttsAborted) return;
-
-    const clause = queue.shift();
-    if (!clause) {
-      onEmpty();
-      return;
-    }
+    if (this.isDraining) return;
+    this.isDraining = true;
 
     try {
-      const pcm = await this.tts.synthesize(clause);
-      if (this.ttsAborted) return;
+      while (!this.ttsAborted) {
+        const clause = queue.shift();
+        if (!clause) {
+          // Queue is empty for now — notify caller (triggers _onSpeakingDone
+          // only when LLM generation has also finished).
+          onEmpty();
+          break;
+        }
 
-      this.audioPlayer.addChunk(pcm, this.tts.sampleRate);
-      await this.audioPlayer.playAndClear();
+        const pcm = await this.tts.synthesize(clause);
+        if (this.ttsAborted) break;
 
-      if (!this.ttsAborted) {
-        await this._drainTtsQueue(queue, onEmpty);
+        this.audioPlayer.addChunk(pcm, this.tts.sampleRate);
+        await this.audioPlayer.playAndClear();
       }
     } catch (err) {
       this.callbacks.onError(
         err instanceof Error ? `TTS error: ${err.message}` : 'TTS failed',
       );
+    } finally {
+      this.isDraining = false;
+      // If a clause arrived in the race window between the loop exiting and
+      // isDraining being cleared, restart so it isn't stranded in the queue.
+      if (queue.length > 0 && !this.ttsAborted) {
+        void this._drainTtsQueue(queue, onEmpty);
+      }
     }
   }
 
@@ -245,7 +279,12 @@ export class VoicePipeline {
       this.history = this.history.slice(this.history.length - maxTurns * 2);
     }
 
-    void this._listen();
+    // Delay before reactivating the microphone. Without this the mic picks up
+    // the tail end of TTS speaker output and transcribes it as user speech
+    // (echo loop). The delay lets the audio hardware settle.
+    setTimeout(() => {
+      if (!this.isCancelled) void this._listen();
+    }, AppConfig.pipeline.postSpeakingDelayMs);
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
