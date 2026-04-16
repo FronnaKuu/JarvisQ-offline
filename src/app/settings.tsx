@@ -1,9 +1,10 @@
-// ─── Settings Screen ──────────────────────────────────────────────────────────
+// ---- Settings Screen -----------------------------------------------------
 
 import React, { useState } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, View } from 'react-native';
 import { Divider, Switch, Text, TextInput } from 'react-native-paper';
 import { useSettingsStore } from '@domain/SettingsStore';
+import { AppTheme } from '@ui/theme/theme';
 
 export default function SettingsScreen() {
   const { settings, updateSettings } = useSettingsStore();
@@ -26,9 +27,9 @@ export default function SettingsScreen() {
           numberOfLines={4}
           style={styles.input}
           mode="outlined"
-          outlineColor="#1A1A24"
-          activeOutlineColor="#7B9EFF"
-          textColor="#E4E1E6"
+          outlineColor={AppTheme.colors.surfaceVariant}
+          activeOutlineColor={AppTheme.colors.primary}
+          textColor={AppTheme.colors.onBackground}
         />
 
         <Divider style={styles.divider} />
@@ -43,7 +44,7 @@ export default function SettingsScreen() {
           <Switch
             value={settings.useGpu}
             onValueChange={(v) => void updateSettings({ useGpu: v })}
-            color="#7B9EFF"
+            color={AppTheme.colors.primary}
           />
         </View>
 
@@ -53,10 +54,10 @@ export default function SettingsScreen() {
           About
         </Text>
         <Text variant="bodySmall" style={styles.about}>
-          JarvisQVAC — on-device AI voice assistant{'\n'}
-          STT: Whisper (qvac-lib-infer-whispercpp){'\n'}
-          LLM: llama.cpp (qvac-lib-infer-llamacpp-llm){'\n'}
-          TTS: Supertonic ONNX (qvac-lib-infer-onnx-tts){'\n'}
+          JarvisQVAC -- on-device AI voice assistant{'\n'}
+          STT: Whisper / Parakeet (qvac){'\n'}
+          LLM: llama.cpp (qvac){'\n'}
+          TTS: Supertonic ONNX (qvac){'\n'}
           Backend: QVAC by Tether.to
         </Text>
       </ScrollView>
@@ -67,22 +68,22 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#0B0B0F',
+    backgroundColor: AppTheme.colors.background,
   },
   content: {
     padding: 24,
     gap: 12,
   },
   sectionTitle: {
-    color: '#7B9EFF',
+    color: AppTheme.colors.primary,
     marginTop: 8,
     fontWeight: '600',
   },
   input: {
-    backgroundColor: '#121218',
+    backgroundColor: AppTheme.colors.surface,
   },
   divider: {
-    backgroundColor: '#1A1A24',
+    backgroundColor: AppTheme.colors.surfaceVariant,
     marginVertical: 8,
   },
   row: {
@@ -92,10 +93,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   rowLabel: {
-    color: '#E4E1E6',
+    color: AppTheme.colors.onBackground,
   },
   about: {
-    color: '#908F9A',
+    color: AppTheme.colors.outline,
     lineHeight: 20,
   },
 });

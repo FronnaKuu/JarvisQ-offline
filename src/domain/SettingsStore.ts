@@ -1,11 +1,9 @@
-// ─── Settings Store (Zustand) ─────────────────────────────────────────────────
+// ---- Settings Store (Zustand) --------------------------------------------
 
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AppSettings } from './types';
-import {
-  AppConfig,
-} from '@core/config/AppConfig';
+import { AppConfig } from '@core/config/AppConfig';
 import {
   DEFAULT_STT_PROFILE_ID,
   DEFAULT_LLM_PROFILE_ID,

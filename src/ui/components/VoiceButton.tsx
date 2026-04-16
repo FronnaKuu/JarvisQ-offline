@@ -1,21 +1,21 @@
-// ─── Voice Button ─────────────────────────────────────────────────────────────
+// ---- Voice Button --------------------------------------------------------
 // Shows pipeline phase with color + animated ring.
 // During LISTENING: ring scale reflects real microphone amplitude (dBFS).
 
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
+import { AppTheme } from '@ui/theme/theme';
 import type { PipelinePhase } from '@domain/types';
 
 interface Props {
   phase: PipelinePhase;
-  /** Current dBFS amplitude from microphone (-160 to 0). Used during LISTENING. */
   amplitude?: number;
   onPress: () => void;
 }
 
 const PHASE_COLORS: Record<PipelinePhase, string> = {
-  IDLE: '#7B9EFF',
+  IDLE: AppTheme.colors.primary,
   LISTENING: '#FF5252',
   THINKING: '#FFB74D',
   SPEAKING: '#69F0AE',
@@ -23,19 +23,18 @@ const PHASE_COLORS: Record<PipelinePhase, string> = {
 
 const PHASE_LABELS: Record<PipelinePhase, string> = {
   IDLE: 'Tap to speak',
-  LISTENING: 'Listening…',
-  THINKING: 'Thinking…',
-  SPEAKING: 'Speaking…',
+  LISTENING: 'Listening...',
+  THINKING: 'Thinking...',
+  SPEAKING: 'Speaking...',
 };
 
 const PHASE_ICONS: Record<PipelinePhase, string> = {
-  IDLE: '🎤',
-  LISTENING: '🔴',
-  THINKING: '⚡',
-  SPEAKING: '🔊',
+  IDLE: '\u{1F3A4}',
+  LISTENING: '\u{1F534}',
+  THINKING: '\u26A1',
+  SPEAKING: '\u{1F50A}',
 };
 
-// Maps dBFS [-60, -10] → scale [1.0, 1.5]
 function dbToScale(db: number): number {
   const clamped = Math.max(-60, Math.min(-10, db));
   return 1.0 + ((clamped + 60) / 50) * 0.5;
@@ -46,7 +45,6 @@ export function VoiceButton({ phase, amplitude = -160, onPress }: Props) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
 
-  // Drive ring scale from real amplitude during LISTENING
   useEffect(() => {
     if (phase === 'LISTENING') {
       const target = dbToScale(amplitude);
@@ -65,7 +63,6 @@ export function VoiceButton({ phase, amplitude = -160, onPress }: Props) {
     }
   }, [phase, amplitude, scaleAnim]);
 
-  // Slow idle pulse for THINKING / SPEAKING phases
   useEffect(() => {
     if (phase === 'THINKING' || phase === 'SPEAKING') {
       pulseLoop.current = Animated.loop(
@@ -131,5 +128,5 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   icon: { fontSize: 28 },
-  label: { color: '#C6C4CE', letterSpacing: 0.5 },
+  label: { color: AppTheme.colors.onSurfaceVariant, letterSpacing: 0.5 },
 });

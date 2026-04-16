@@ -1,8 +1,9 @@
-// ─── Download Progress ────────────────────────────────────────────────────────
+// ---- Download Progress ---------------------------------------------------
 
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ProgressBar, Text } from 'react-native-paper';
+import { AppTheme } from '@ui/theme/theme';
 import type { DownloadProgress } from '@domain/types';
 
 interface Props {
@@ -21,7 +22,7 @@ export function DownloadProgressItem({ label, progress, isDone }: Props) {
     <View style={styles.item}>
       <View style={styles.row}>
         <Text variant="bodyMedium" style={styles.label}>
-          {isDone ? '✓ ' : ''}{label}
+          {isDone ? '\u2713 ' : ''}{label}
         </Text>
         {progress && !isDone && (
           <Text variant="bodySmall" style={styles.size}>
@@ -33,7 +34,7 @@ export function DownloadProgressItem({ label, progress, isDone }: Props) {
         <ProgressBar
           progress={progress ? progress.percentage / 100 : 0}
           style={styles.bar}
-          color="#7B9EFF"
+          color={AppTheme.colors.primary}
         />
       )}
     </View>
@@ -51,14 +52,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   label: {
-    color: '#E4E1E6',
+    color: AppTheme.colors.onBackground,
   },
   size: {
-    color: '#908F9A',
+    color: AppTheme.colors.outline,
   },
   bar: {
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#1A1A24',
+    backgroundColor: AppTheme.colors.surfaceVariant,
   },
 });

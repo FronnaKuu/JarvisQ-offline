@@ -1,4 +1,4 @@
-// ─── Conversation Repository ──────────────────────────────────────────────────
+// ---- Conversation Repository ---------------------------------------------
 
 import { getDatabase, rowToConversation } from '../database';
 import type { Conversation } from '@domain/types';

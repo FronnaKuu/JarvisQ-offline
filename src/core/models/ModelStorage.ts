@@ -1,4 +1,4 @@
-// ─── Model Storage ────────────────────────────────────────────────────────────
+// ---- Model Storage -------------------------------------------------------
 // Resolves model file paths on device storage.
 
 import * as FileSystem from 'expo-file-system/legacy';

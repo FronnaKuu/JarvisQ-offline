@@ -1,28 +1,21 @@
-// ─── Voice Pipeline ───────────────────────────────────────────────────────────
-// Orchestrates STT → LLM → TTS in a continuous loop.
+// ---- Voice Pipeline ------------------------------------------------------
+// Orchestrates STT -> LLM -> TTS in a continuous loop.
 //
-// Dependencies are injected via constructor — no direct imports of singletons.
-// This makes the pipeline testable with mock services.
-//
-// STT approach:
-//   AudioRecorder uses amplitude-based VAD (expo-av metering) to auto-stop
-//   recording after ~900ms of silence. The f32le PCM Buffer is then passed
-//   directly to transcribeStream(), which yields tokens progressively.
-//   This is as close to real-time as possible without raw frame access.
+// Audio I/O is injected via constructor (IAudioRecorder / IAudioPlayer)
+// because it genuinely differs between mobile and desktop platforms.
+// Everything else uses direct imports -- no unnecessary abstraction.
 
-import { AudioRecorder } from '@core/audio/AudioRecorder';
-import { AudioPlayer } from '@core/audio/AudioPlayer';
 import { ClauseStreamer } from './ClauseStreamer';
 import { AppConfig } from '@core/config/AppConfig';
 import { captureSnapshot, logLlmStart, logLlmDone } from '@core/utils/PerfLogger';
+import type { IAudioRecorder } from '@core/ports/IAudioRecorder';
+import type { IAudioPlayer } from '@core/ports/IAudioPlayer';
 import type { ISttService, ILlmService, ITtsService, ConversationMessage } from '@core/inference/types';
 import type { PipelinePhase } from '@domain/types';
 
 export interface PipelineCallbacks {
   onPhaseChange: (phase: PipelinePhase) => void;
-  /** Called during recording with current dBFS amplitude (for waveform UI) */
   onAmplitude: (dbFS: number) => void;
-  /** Called with partial STT text during transcription phase */
   onSttPartial: (text: string) => void;
   onSttFinal: (text: string) => void;
   onLlmToken: (token: string) => void;
@@ -42,6 +35,12 @@ export interface PipelineServices {
   tts: ITtsService;
 }
 
+export interface PipelineDeps {
+  services: PipelineServices;
+  recorder: IAudioRecorder;
+  audioPlayer: IAudioPlayer;
+}
+
 export class VoicePipeline {
   private phase: PipelinePhase = 'IDLE';
   private isCancelled = false;
@@ -49,8 +48,8 @@ export class VoicePipeline {
   private isDraining = false;
   private history: ConversationMessage[] = [];
 
-  private readonly recorder: AudioRecorder;
-  private readonly audioPlayer: AudioPlayer;
+  private readonly recorder: IAudioRecorder;
+  private readonly audioPlayer: IAudioPlayer;
   private readonly stt: ISttService;
   private readonly llm: ILlmService;
   private readonly tts: ITtsService;
@@ -58,22 +57,17 @@ export class VoicePipeline {
   private config: PipelineConfig;
 
   constructor(
-    services: PipelineServices,
+    deps: PipelineDeps,
     callbacks: PipelineCallbacks,
     config: PipelineConfig = {},
   ) {
-    this.stt = services.stt;
-    this.llm = services.llm;
-    this.tts = services.tts;
+    this.stt = deps.services.stt;
+    this.llm = deps.services.llm;
+    this.tts = deps.services.tts;
+    this.recorder = deps.recorder;
+    this.audioPlayer = deps.audioPlayer;
     this.callbacks = callbacks;
     this.config = config;
-
-    this.recorder = new AudioRecorder({
-      onStateChange: () => { /* state reflected via pipeline phase */ },
-      onAmplitude: (db) => callbacks.onAmplitude(db),
-    });
-
-    this.audioPlayer = new AudioPlayer();
   }
 
   updateConfig(config: Partial<PipelineConfig>): void {
@@ -84,44 +78,43 @@ export class VoicePipeline {
     this.history = [];
   }
 
-  // ─── Public control ──────────────────────────────────────────────────────────
+  // ---- Public control ----------------------------------------------------
 
   async startListening(): Promise<void> {
     if (this.phase !== 'IDLE') return;
     this.isCancelled = false;
     this.ttsAborted = false;
-    await this._listen();
+    await this.listen();
   }
 
   async stopListening(): Promise<void> {
     this.isCancelled = true;
     await this.recorder.abort();
-    this._abortTts();
-    this._setPhase('IDLE');
+    this.abortTts();
+    this.setPhase('IDLE');
   }
 
-  // ─── Listen phase ─────────────────────────────────────────────────────────────
+  // ---- Listen phase ------------------------------------------------------
 
-  private async _listen(): Promise<void> {
-    this._setPhase('LISTENING');
+  private async listen(): Promise<void> {
+    this.setPhase('LISTENING');
 
     const result = await this.recorder.record();
 
     if (this.isCancelled) return;
 
     if (!result) {
-      // No speech detected or recording aborted
-      this._setPhase('IDLE');
+      this.setPhase('IDLE');
       return;
     }
 
-    await this._transcribe(result.uri);
+    await this.transcribe(result.uri);
   }
 
-  // ─── Transcribe phase ─────────────────────────────────────────────────────────
+  // ---- Transcribe phase --------------------------------------------------
 
-  private async _transcribe(uri: string): Promise<void> {
-    this._setPhase('THINKING');
+  private async transcribe(uri: string): Promise<void> {
+    this.setPhase('THINKING');
     let finalText = '';
 
     try {
@@ -132,30 +125,27 @@ export class VoicePipeline {
       this.callbacks.onError(
         err instanceof Error ? err.message : 'Transcription failed',
       );
-      this._setPhase('IDLE');
+      this.setPhase('IDLE');
       return;
     }
 
     if (this.isCancelled || !finalText) {
-      this._setPhase('IDLE');
+      this.setPhase('IDLE');
       return;
     }
 
     this.callbacks.onSttFinal(finalText);
-    await this._generate(finalText);
+    await this.generate(finalText);
   }
 
-  // ─── Generate phase ───────────────────────────────────────────────────────────
+  // ---- Generate phase ----------------------------------------------------
 
-  private async _generate(userText: string): Promise<void> {
-    this._setPhase('THINKING');
+  private async generate(userText: string): Promise<void> {
+    this.setPhase('THINKING');
 
-    // Reset audio player state (clears any leftover stopped flag from prior turn).
     this.audioPlayer.reset();
     this.isDraining = false;
 
-    // Always prepend the system prompt so it is applied on every conversation
-    // turn, not just the first one.
     const messages: ConversationMessage[] = [];
     if (this.config.systemPrompt) {
       messages.push({ role: 'system', content: this.config.systemPrompt });
@@ -168,22 +158,21 @@ export class VoicePipeline {
     let ttsStarted = false;
     let tokenCount = 0;
 
-    // Capture performance snapshot and log before generation starts.
     const perfStart = await captureSnapshot();
     logLlmStart(perfStart);
     const llmStartMs = Date.now();
 
     const onQueueEmpty = () => {
-      if (llmDone) this._onSpeakingDone(userText, fullResponse);
+      if (llmDone) this.onSpeakingDone(userText, fullResponse);
     };
 
     const streamer = new ClauseStreamer((clause) => {
       clauses.push(clause);
       if (!ttsStarted) {
         ttsStarted = true;
-        this._setPhase('SPEAKING');
+        this.setPhase('SPEAKING');
       }
-      void this._drainTtsQueue(clauses, onQueueEmpty);
+      void this.drainTtsQueue(clauses, onQueueEmpty);
     });
 
     try {
@@ -198,11 +187,10 @@ export class VoicePipeline {
       this.callbacks.onError(
         err instanceof Error ? err.message : 'LLM generation failed',
       );
-      this._setPhase('IDLE');
+      this.setPhase('IDLE');
       return;
     }
 
-    // Capture end snapshot and log after generation completes.
     const durationMs = Date.now() - llmStartMs;
     const perfEnd = await captureSnapshot();
     logLlmDone(perfStart, perfEnd, durationMs, tokenCount);
@@ -212,19 +200,13 @@ export class VoicePipeline {
     this.callbacks.onLlmDone(fullResponse);
 
     if (clauses.length === 0 && !this.isCancelled) {
-      this._onSpeakingDone(userText, fullResponse);
+      this.onSpeakingDone(userText, fullResponse);
     }
   }
 
-  // ─── TTS queue ────────────────────────────────────────────────────────────────
-  //
-  // Only one drain loop runs at a time (isDraining guard). ClauseStreamer may
-  // push clauses faster than they can be synthesized; each new call while
-  // draining returns immediately — the active loop will pick up the queued
-  // clauses on its next iteration. A finally-block restart handles the narrow
-  // window where the last clause arrives just as the loop exits.
+  // ---- TTS queue ---------------------------------------------------------
 
-  private async _drainTtsQueue(
+  private async drainTtsQueue(
     queue: string[],
     onEmpty: () => void,
   ): Promise<void> {
@@ -235,8 +217,6 @@ export class VoicePipeline {
       while (!this.ttsAborted) {
         const clause = queue.shift();
         if (!clause) {
-          // Queue is empty for now — notify caller (triggers _onSpeakingDone
-          // only when LLM generation has also finished).
           onEmpty();
           break;
         }
@@ -253,19 +233,17 @@ export class VoicePipeline {
       );
     } finally {
       this.isDraining = false;
-      // If a clause arrived in the race window between the loop exiting and
-      // isDraining being cleared, restart so it isn't stranded in the queue.
       if (queue.length > 0 && !this.ttsAborted) {
-        void this._drainTtsQueue(queue, onEmpty);
+        void this.drainTtsQueue(queue, onEmpty);
       }
     }
   }
 
-  // ─── Loop back ────────────────────────────────────────────────────────────────
+  // ---- Loop back ---------------------------------------------------------
 
-  private _onSpeakingDone(userText: string, assistantText: string): void {
+  private onSpeakingDone(userText: string, assistantText: string): void {
     if (this.isCancelled) {
-      this._setPhase('IDLE');
+      this.setPhase('IDLE');
       return;
     }
 
@@ -279,23 +257,20 @@ export class VoicePipeline {
       this.history = this.history.slice(this.history.length - maxTurns * 2);
     }
 
-    // Delay before reactivating the microphone. Without this the mic picks up
-    // the tail end of TTS speaker output and transcribes it as user speech
-    // (echo loop). The delay lets the audio hardware settle.
     setTimeout(() => {
-      if (!this.isCancelled) void this._listen();
+      if (!this.isCancelled) void this.listen();
     }, AppConfig.pipeline.postSpeakingDelayMs);
   }
 
-  // ─── Helpers ─────────────────────────────────────────────────────────────────
+  // ---- Helpers -----------------------------------------------------------
 
-  private _abortTts(): void {
+  private abortTts(): void {
     this.ttsAborted = true;
     void this.audioPlayer.stop().catch(() => {});
     this.llm.cancelGeneration();
   }
 
-  private _setPhase(phase: PipelinePhase): void {
+  private setPhase(phase: PipelinePhase): void {
     if (this.phase === phase) return;
     this.phase = phase;
     this.callbacks.onPhaseChange(phase);

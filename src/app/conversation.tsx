@@ -1,4 +1,4 @@
-// ─── Conversation Screen ──────────────────────────────────────────────────────
+// ---- Conversation Screen -------------------------------------------------
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, SafeAreaView, StyleSheet, View } from 'react-native';
@@ -10,8 +10,10 @@ import { VoicePipeline } from '@core/pipeline/VoicePipeline';
 import { SttService } from '@core/inference/SttService';
 import { LlmService } from '@core/inference/LlmService';
 import { TtsService } from '@core/inference/TtsService';
+import { Platform } from '@platform/mobile/Platform';
 import { useConversationStore } from '@domain/ConversationStore';
 import { useSettingsStore } from '@domain/SettingsStore';
+import { AppTheme } from '@ui/theme/theme';
 import type { Message, PipelinePhase } from '@domain/types';
 
 export default function ConversationScreen() {
@@ -40,10 +42,19 @@ export default function ConversationScreen() {
     }
   }, [messages.length]);
 
-  // Instantiate pipeline once, injecting the singleton services.
   useEffect(() => {
+    const recorder = Platform.createAudioRecorder({
+      onStateChange: () => {},
+      onAmplitude: (db) => setAmplitude(db),
+    });
+    const audioPlayer = Platform.createAudioPlayer();
+
     const pipeline = new VoicePipeline(
-      { stt: SttService, llm: LlmService, tts: TtsService },
+      {
+        services: { stt: SttService, llm: LlmService, tts: TtsService },
+        recorder,
+        audioPlayer,
+      },
       {
         onPhaseChange: (p) => {
           setPhase(p);
@@ -103,7 +114,6 @@ export default function ConversationScreen() {
     await createConversation();
   }, [createConversation]);
 
-  // Show partial STT text during THINKING (transcription in progress)
   const displayMessages: Message[] =
     partialText && phase === 'THINKING'
       ? [
@@ -128,8 +138,8 @@ export default function ConversationScreen() {
           subtitle={activeConversation?.title}
           subtitleStyle={styles.headerSubtitle}
         />
-        <IconButton icon="plus" iconColor="#E4E1E6" onPress={() => void handleNewConversation()} />
-        <IconButton icon="cog" iconColor="#E4E1E6" onPress={() => router.push('/settings')} />
+        <IconButton icon="plus" iconColor={AppTheme.colors.onBackground} onPress={() => void handleNewConversation()} />
+        <IconButton icon="cog" iconColor={AppTheme.colors.onBackground} onPress={() => router.push('/settings')} />
       </Appbar.Header>
 
       <FlatList
@@ -155,25 +165,25 @@ export default function ConversationScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0B0B0F' },
-  header: { backgroundColor: '#0B0B0F', elevation: 0 },
-  headerTitle: { color: '#E4E1E6', fontSize: 18, fontWeight: '700' },
-  headerSubtitle: { color: '#908F9A', fontSize: 12 },
+  safe: { flex: 1, backgroundColor: AppTheme.colors.background },
+  header: { backgroundColor: AppTheme.colors.background, elevation: 0 },
+  headerTitle: { color: AppTheme.colors.onBackground, fontSize: 18, fontWeight: '700' },
+  headerSubtitle: { color: AppTheme.colors.outline, fontSize: 12 },
   chatList: { flex: 1 },
   chatContent: { paddingVertical: 12, paddingBottom: 24 },
   errorBanner: {
     marginHorizontal: 16,
     marginBottom: 8,
-    backgroundColor: '#690005',
+    backgroundColor: AppTheme.colors.onError,
     borderRadius: 8,
     padding: 10,
   },
-  errorText: { color: '#FFB4AB', textAlign: 'center' },
+  errorText: { color: AppTheme.colors.error, textAlign: 'center' },
   controls: {
     paddingBottom: 40,
     paddingTop: 20,
     alignItems: 'center',
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#1A1A24',
+    borderTopColor: AppTheme.colors.surfaceVariant,
   },
 });

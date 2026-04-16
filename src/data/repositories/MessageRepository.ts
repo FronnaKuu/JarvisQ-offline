@@ -1,4 +1,4 @@
-// ─── Message Repository ───────────────────────────────────────────────────────
+// ---- Message Repository --------------------------------------------------
 
 import { getDatabase, rowToMessage } from '../database';
 import type { Message } from '@domain/types';

@@ -14,6 +14,7 @@ config.resolver.alias = {
   '@domain': path.resolve(__dirname, 'src/domain'),
   '@data': path.resolve(__dirname, 'src/data'),
   '@ui': path.resolve(__dirname, 'src/ui'),
+  '@platform': path.resolve(__dirname, 'src/platform'),
 };
 
 module.exports = config;

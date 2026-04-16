@@ -1,4 +1,4 @@
-// ─── Model Downloader ─────────────────────────────────────────────────────────
+// ---- Model Downloader ----------------------------------------------------
 // Downloads model files with resume support and progress callbacks.
 
 import * as FileSystem from 'expo-file-system/legacy';
@@ -105,7 +105,6 @@ export async function downloadModelDir(
   for (const task of tasks) {
     const filePath = `${dirPath}${task.filename}`;
 
-    // Create subdirectory for paths like 'onnx/text_encoder.onnx'
     const slashIdx = task.filename.lastIndexOf('/');
     if (slashIdx !== -1) {
       const subDir = `${dirPath}${task.filename.substring(0, slashIdx)}/`;

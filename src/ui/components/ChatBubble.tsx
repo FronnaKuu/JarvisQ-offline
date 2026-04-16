@@ -1,8 +1,9 @@
-// ─── Chat Bubble ──────────────────────────────────────────────────────────────
+// ---- Chat Bubble ---------------------------------------------------------
 
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
+import { AppTheme } from '@ui/theme/theme';
 import type { Message } from '@domain/types';
 
 interface Props {
@@ -18,7 +19,7 @@ export function ChatBubble({ message }: Props) {
           style={[styles.text, message.isStreaming && styles.streaming]}
           variant="bodyMedium"
         >
-          {message.text || (message.isStreaming ? '…' : '')}
+          {message.text || (message.isStreaming ? '...' : '')}
         </Text>
       </View>
     </View>
@@ -43,15 +44,15 @@ const styles = StyleSheet.create({
     borderRadius: 18,
   },
   bubbleUser: {
-    backgroundColor: '#2B2BFF',
+    backgroundColor: AppTheme.colors.primaryContainer,
     borderBottomRightRadius: 4,
   },
   bubbleAssistant: {
-    backgroundColor: '#1A1A24',
+    backgroundColor: AppTheme.colors.surfaceVariant,
     borderBottomLeftRadius: 4,
   },
   text: {
-    color: '#E4E1E6',
+    color: AppTheme.colors.onBackground,
     lineHeight: 22,
   },
   streaming: {

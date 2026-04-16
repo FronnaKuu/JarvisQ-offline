@@ -1,6 +1,5 @@
-// ─── Setup Screen ─────────────────────────────────────────────────────────────
+// ---- Setup Screen --------------------------------------------------------
 // Downloads and loads all required models via @qvac/sdk before entering the app.
-// The SDK handles download, caching, and loading in a single loadModel() call.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, View } from 'react-native';
@@ -20,6 +19,7 @@ import { LlmService } from '@core/inference/LlmService';
 import { TtsService } from '@core/inference/TtsService';
 import { useConversationStore } from '@domain/ConversationStore';
 import { useSettingsStore } from '@domain/SettingsStore';
+import { AppTheme } from '@ui/theme/theme';
 import type { DownloadProgress } from '@domain/types';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 
@@ -64,8 +64,7 @@ export default function SetupScreen() {
       const llmProfile = LLM_PROFILES[DEFAULT_LLM_PROFILE_ID]!;
       const ttsProfile = TTS_PROFILES[DEFAULT_TTS_PROFILE_ID]!;
 
-      // ── 1. Load STT ────────────────────────────────────────────────────────
-      setStatusText(`Downloading ${sttProfile.label}…`);
+      setStatusText(`Downloading ${sttProfile.label}...`);
       await SttService.load(
         sttProfile.buildLoadConfig(settings.useGpu, settings.sttLanguage),
         (p) => {
@@ -77,8 +76,7 @@ export default function SetupScreen() {
       );
       if (isMounted.current) setSttDone(true);
 
-      // ── 2. Load LLM ────────────────────────────────────────────────────────
-      setStatusText(`Downloading ${llmProfile.label}…`);
+      setStatusText(`Downloading ${llmProfile.label}...`);
       await LlmService.load(
         llmProfile.buildLoadConfig(
           settings.useGpu,
@@ -100,8 +98,7 @@ export default function SetupScreen() {
       );
       if (isMounted.current) setLlmDone(true);
 
-      // ── 3. Load TTS ────────────────────────────────────────────────────────
-      setStatusText(`Downloading ${ttsProfile.label}…`);
+      setStatusText(`Downloading ${ttsProfile.label}...`);
       await TtsService.load(
         ttsProfile.buildLoadConfig(settings.useGpu, settings.ttsSpeed, 'en'),
         (p) => {
@@ -113,7 +110,6 @@ export default function SetupScreen() {
       );
       if (isMounted.current) setTtsDone(true);
 
-      // ── 4. Create first conversation and navigate ──────────────────────────
       await createConversation();
       setPhase('done');
       router.replace('/conversation');
@@ -192,18 +188,18 @@ export default function SetupScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0B0B0F' },
+  safe: { flex: 1, backgroundColor: AppTheme.colors.background },
   content: { padding: 24, gap: 16, flexGrow: 1 },
-  title: { color: '#E4E1E6', marginTop: 32, fontWeight: '700' },
-  subtitle: { color: '#908F9A', marginBottom: 16 },
+  title: { color: AppTheme.colors.onBackground, marginTop: 32, fontWeight: '700' },
+  subtitle: { color: AppTheme.colors.outline, marginBottom: 16 },
   section: {
-    backgroundColor: '#121218',
+    backgroundColor: AppTheme.colors.surface,
     borderRadius: 16,
     padding: 16,
     gap: 4,
   },
-  statusText: { color: '#BDC2DD', textAlign: 'center' },
-  errorText: { color: '#FFB4AB', textAlign: 'center' },
+  statusText: { color: AppTheme.colors.secondary, textAlign: 'center' },
+  errorText: { color: AppTheme.colors.error, textAlign: 'center' },
   button: { marginTop: 24, borderRadius: 12 },
   buttonContent: { paddingVertical: 8 },
 });

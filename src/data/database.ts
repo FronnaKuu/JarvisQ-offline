@@ -1,4 +1,4 @@
-// ─── SQLite Database ──────────────────────────────────────────────────────────
+// ---- SQLite Database -----------------------------------------------------
 // Schema, migrations, and singleton instance.
 
 import * as SQLite from 'expo-sqlite';
@@ -46,7 +46,7 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   `);
 }
 
-// ─── Row mapping helpers ──────────────────────────────────────────────────────
+// ---- Row mapping helpers -------------------------------------------------
 
 type ConversationRow = {
   id: string;

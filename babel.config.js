@@ -15,6 +15,7 @@ module.exports = function (api) {
             '@domain': './src/domain',
             '@data': './src/data',
             '@ui': './src/ui',
+            '@platform': './src/platform',
             '@worklet': './worklet',
           },
         },
