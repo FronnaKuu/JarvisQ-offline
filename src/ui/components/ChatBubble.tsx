@@ -4,6 +4,7 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
 import { AppTheme } from '@ui/theme/theme';
+import { formatMessageTimestamp } from '@core/utils/formatTime';
 import type { Message } from '@domain/types';
 
 interface Props {
@@ -12,6 +13,11 @@ interface Props {
 
 export function ChatBubble({ message }: Props) {
   const isUser = message.role === 'user';
+  const isPartial = message.id === '__partial__';
+  const timestampLabel = isPartial
+    ? null
+    : formatMessageTimestamp(message.timestampMs);
+
   return (
     <View style={[styles.wrapper, isUser ? styles.wrapperUser : styles.wrapperAssistant]}>
       <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
@@ -22,14 +28,20 @@ export function ChatBubble({ message }: Props) {
           {message.text || (message.isStreaming ? '...' : '')}
         </Text>
       </View>
+      {timestampLabel ? (
+        <Text variant="labelSmall" style={styles.timestamp}>
+          {timestampLabel}
+        </Text>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrapper: {
-    paddingHorizontal: 16,
-    paddingVertical: 4,
+    paddingHorizontal: AppTheme.spacing.lg,
+    paddingVertical: AppTheme.spacing.xs,
+    gap: AppTheme.spacing.xxs,
   },
   wrapperUser: {
     alignItems: 'flex-end',
@@ -39,17 +51,17 @@ const styles = StyleSheet.create({
   },
   bubble: {
     maxWidth: '85%',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
+    paddingHorizontal: AppTheme.spacing.md,
+    paddingVertical: AppTheme.spacing.sm,
+    borderRadius: AppTheme.radius.xl,
   },
   bubbleUser: {
     backgroundColor: AppTheme.colors.primaryContainer,
-    borderBottomRightRadius: 4,
+    borderBottomRightRadius: AppTheme.radius.sm,
   },
   bubbleAssistant: {
     backgroundColor: AppTheme.colors.surfaceVariant,
-    borderBottomLeftRadius: 4,
+    borderBottomLeftRadius: AppTheme.radius.sm,
   },
   text: {
     color: AppTheme.colors.onBackground,
@@ -57,5 +69,9 @@ const styles = StyleSheet.create({
   },
   streaming: {
     opacity: 0.75,
+  },
+  timestamp: {
+    color: AppTheme.colors.outline,
+    paddingHorizontal: AppTheme.spacing.xs,
   },
 });

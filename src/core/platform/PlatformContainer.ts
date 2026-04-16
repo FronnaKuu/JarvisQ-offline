@@ -17,11 +17,17 @@ import type {
   IFileSystem,
   IKeyValueStore,
 } from '@core/ports';
+import type { IHaptics } from '@core/ports/IHaptics';
+import type { IPermissions } from '@core/ports/IPermissions';
+import type { INetworkInfo } from '@core/ports/INetworkInfo';
 
 export interface PlatformAdapters {
   fileSystem: IFileSystem;
   keyValueStore: IKeyValueStore;
   database: IDatabase;
+  haptics: IHaptics;
+  permissions: IPermissions;
+  networkInfo: INetworkInfo;
 }
 
 let adapters: PlatformAdapters | null = null;

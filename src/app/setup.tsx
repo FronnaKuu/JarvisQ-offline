@@ -2,7 +2,8 @@
 // Downloads and loads all required models via @qvac/sdk before entering the app.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { SafeAreaView, ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Text } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { DownloadProgressItem } from '@ui/components/DownloadProgress';
@@ -190,17 +191,31 @@ export default function SetupScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: AppTheme.colors.background },
-  content: { padding: 24, gap: 16, flexGrow: 1 },
-  title: { color: AppTheme.colors.onBackground, marginTop: 32, fontWeight: '700' },
-  subtitle: { color: AppTheme.colors.outline, marginBottom: 16 },
+  content: {
+    padding: AppTheme.spacing.xl,
+    gap: AppTheme.spacing.lg,
+    flexGrow: 1,
+  },
+  title: {
+    color: AppTheme.colors.onBackground,
+    marginTop: AppTheme.spacing.xxl,
+    fontWeight: '700',
+  },
+  subtitle: {
+    color: AppTheme.colors.outline,
+    marginBottom: AppTheme.spacing.lg,
+  },
   section: {
     backgroundColor: AppTheme.colors.surface,
-    borderRadius: 16,
-    padding: 16,
-    gap: 4,
+    borderRadius: AppTheme.radius.xl,
+    padding: AppTheme.spacing.lg,
+    gap: AppTheme.spacing.xs,
   },
   statusText: { color: AppTheme.colors.secondary, textAlign: 'center' },
   errorText: { color: AppTheme.colors.error, textAlign: 'center' },
-  button: { marginTop: 24, borderRadius: 12 },
-  buttonContent: { paddingVertical: 8 },
+  button: {
+    marginTop: AppTheme.spacing.xl,
+    borderRadius: AppTheme.radius.lg,
+  },
+  buttonContent: { paddingVertical: AppTheme.spacing.sm },
 });

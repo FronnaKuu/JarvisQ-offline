@@ -4,8 +4,9 @@
 
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Text } from 'react-native-paper';
+import { Icon, Text } from 'react-native-paper';
 import { AppTheme } from '@ui/theme/theme';
+import { getPlatform } from '@core/platform/PlatformContainer';
 import type { PipelinePhase } from '@domain/types';
 
 interface Props {
@@ -15,29 +16,38 @@ interface Props {
 }
 
 const PHASE_COLORS: Record<PipelinePhase, string> = {
-  IDLE: AppTheme.colors.primary,
-  LISTENING: '#FF5252',
-  THINKING: '#FFB74D',
-  SPEAKING: '#69F0AE',
+  IDLE: AppTheme.colors.status.idle,
+  LISTENING: AppTheme.colors.status.listening,
+  THINKING: AppTheme.colors.status.thinking,
+  SPEAKING: AppTheme.colors.status.speaking,
 };
 
 const PHASE_LABELS: Record<PipelinePhase, string> = {
   IDLE: 'Tap to speak',
   LISTENING: 'Listening...',
   THINKING: 'Thinking...',
-  SPEAKING: 'Speaking...',
+  SPEAKING: 'Tap to interrupt',
 };
 
 const PHASE_ICONS: Record<PipelinePhase, string> = {
-  IDLE: '\u{1F3A4}',
-  LISTENING: '\u{1F534}',
-  THINKING: '\u26A1',
-  SPEAKING: '\u{1F50A}',
+  IDLE: 'microphone',
+  LISTENING: 'microphone',
+  THINKING: 'dots-horizontal',
+  SPEAKING: 'volume-high',
 };
 
+const AMPLITUDE_MIN_DB = -60;
+const AMPLITUDE_MAX_DB = -10;
+const RING_SCALE_RANGE = 0.5;
+
+const BUTTON_SIZE = 80;
+const RING_SIZE = 108;
+
 function dbToScale(db: number): number {
-  const clamped = Math.max(-60, Math.min(-10, db));
-  return 1.0 + ((clamped + 60) / 50) * 0.5;
+  const clamped = Math.max(AMPLITUDE_MIN_DB, Math.min(AMPLITUDE_MAX_DB, db));
+  const normalized =
+    (clamped - AMPLITUDE_MIN_DB) / (AMPLITUDE_MAX_DB - AMPLITUDE_MIN_DB);
+  return 1.0 + normalized * RING_SCALE_RANGE;
 }
 
 export function VoiceButton({ phase, amplitude = -160, onPress }: Props) {
@@ -47,9 +57,8 @@ export function VoiceButton({ phase, amplitude = -160, onPress }: Props) {
 
   useEffect(() => {
     if (phase === 'LISTENING') {
-      const target = dbToScale(amplitude);
       Animated.spring(scaleAnim, {
-        toValue: target,
+        toValue: dbToScale(amplitude),
         useNativeDriver: true,
         speed: 40,
         bounciness: 2,
@@ -83,21 +92,37 @@ export function VoiceButton({ phase, amplitude = -160, onPress }: Props) {
   const ringScale = phase === 'LISTENING' ? scaleAnim : pulseAnim;
   const isInteractive = phase === 'IDLE' || phase === 'LISTENING';
 
+  const handlePress = () => {
+    if (!isInteractive) return;
+    getPlatform().haptics.impact('medium');
+    onPress();
+  };
+
+  const showRing = phase !== 'IDLE';
+
   return (
     <View style={styles.container}>
-      <Animated.View
-        style={[
-          styles.ring,
-          { borderColor: color, transform: [{ scale: ringScale }] },
-        ]}
-      />
-      <TouchableOpacity
-        onPress={isInteractive ? onPress : undefined}
-        style={[styles.button, { backgroundColor: color }]}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.icon}>{PHASE_ICONS[phase]}</Text>
-      </TouchableOpacity>
+      <View style={styles.buttonWrap}>
+        {showRing && (
+          <Animated.View
+            style={[
+              styles.ring,
+              { borderColor: color, transform: [{ scale: ringScale }] },
+            ]}
+          />
+        )}
+        <TouchableOpacity
+          onPress={handlePress}
+          disabled={!isInteractive}
+          style={[styles.button, { backgroundColor: color }]}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={PHASE_LABELS[phase]}
+          accessibilityState={{ disabled: !isInteractive, busy: phase === 'THINKING' }}
+        >
+          <Icon source={PHASE_ICONS[phase]} size={32} color={AppTheme.colors.onPrimary} />
+        </TouchableOpacity>
+      </View>
       <Text style={styles.label} variant="labelMedium">
         {PHASE_LABELS[phase]}
       </Text>
@@ -106,19 +131,25 @@ export function VoiceButton({ phase, amplitude = -160, onPress }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', gap: 12 },
+  container: { alignItems: 'center', gap: AppTheme.spacing.md },
+  buttonWrap: {
+    width: RING_SIZE,
+    height: RING_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   ring: {
     position: 'absolute',
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+    width: RING_SIZE,
+    height: RING_SIZE,
+    borderRadius: RING_SIZE / 2,
     borderWidth: 2,
-    opacity: 0.45,
+    opacity: 0.35,
   },
   button: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: BUTTON_SIZE,
+    height: BUTTON_SIZE,
+    borderRadius: BUTTON_SIZE / 2,
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 6,
@@ -127,6 +158,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
   },
-  icon: { fontSize: 28 },
-  label: { color: AppTheme.colors.onSurfaceVariant, letterSpacing: 0.5 },
+  label: {
+    color: AppTheme.colors.onSurfaceVariant,
+    letterSpacing: 0.5,
+  },
 });

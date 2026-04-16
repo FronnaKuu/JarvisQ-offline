@@ -23,6 +23,16 @@ export type {
   SqlRow,
 } from './IDatabase';
 export type {
+  IHaptics,
+  HapticImpact,
+  HapticNotification,
+} from './IHaptics';
+export type {
+  IPermissions,
+  PermissionStatus,
+} from './IPermissions';
+export type { INetworkInfo } from './INetworkInfo';
+export type {
   ISttService,
   ILlmService,
   ITtsService,

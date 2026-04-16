@@ -53,10 +53,19 @@ npm run android
 ### Build and install a standalone release APK
 
 ```bash
-npx expo run:android --variant release
+cd android && ./gradlew assembleRelease
+adb install -r android/app/build/outputs/apk/release/app-release.apk
 ```
 
-The release APK bundles the JS, so the app runs without a Metro connection.
+The release APK embeds the JS bundle (`assets/index.android.bundle`, Hermes
+bytecode), so the app runs without a Metro connection — keeps working after
+USB disconnect.
+
+If you changed `app.json`, installed a new Expo plugin, or edited native
+config, run `npx expo prebuild --platform android` first. See
+[AGENTS.md](AGENTS.md) ("Android release build & verify") for the full
+workflow, including how to verify the APK actually contains your JS changes
+and how to diagnose a stuck splash screen.
 
 ---
 
@@ -65,24 +74,38 @@ The release APK bundles the JS, so the app runs without a Metro connection.
 ```
 src/
 ├── app/           Expo Router screens (delivery layer)
+│   ├── _layout.tsx        Root stack + providers (Paper, SafeArea)
+│   ├── index.tsx          Splash: bootstrap + permission + offline probe
+│   ├── conversation.tsx   Main chat (voice + text fallback)
+│   ├── conversations.tsx  List/rename/delete stored conversations
+│   ├── settings.tsx       Full AppSettings editor (debounced)
+│   └── setup.tsx          Legacy explicit-setup entry (reserved)
 ├── core/          Platform-agnostic business logic
+│   ├── bootstrap/   AppBootstrap — orchestrates STT/LLM/TTS readiness
 │   ├── config/      AppConfig, ModelConfig, HttpModelSources
 │   ├── inference/   SttService, LlmService, TtsService (SDK wrappers)
-│   ├── pipeline/    VoicePipeline state machine
+│   ├── net/         FetchNetworkInfo — shared fetch-based INetworkInfo
+│   ├── pipeline/    VoicePipeline (voice loop, barge-in, text fallback)
 │   ├── ports/       IAudioRecorder, IAudioPlayer, IFileSystem,
-│   │                IKeyValueStore, IDatabase — cross-platform contracts
+│   │                IKeyValueStore, IDatabase, IHaptics, IPermissions,
+│   │                INetworkInfo — cross-platform contracts
 │   ├── platform/    PlatformContainer (service locator for adapters)
-│   └── utils/       Pure helpers (loadWithFallback, downloadTtsWithCompanions)
+│   └── utils/       Pure helpers (loadWithFallback, formatTime, ...)
 ├── data/          Repositories + row mappers (depend on IDatabase only)
-├── domain/        Zustand stores + domain types
+├── domain/        Zustand stores (Settings, Conversation, Bootstrap) + types
 ├── platform/
 │   ├── mobile/      Expo adapters (ExpoAudioRecorder, ExpoFileSystem,
 │   │                ExpoSqliteDatabase, AsyncStorageKeyValueStore,
+│   │                ExpoPermissions, RnVibrationHaptics,
 │   │                bootstrap.ts — registers adapters into the container)
 │   └── desktop/     Node adapters (NodeFileSystem, JsonFileKeyValueStore,
-│                    NodeSqliteDatabase) — scaffold ready; audio backend
-│                    (Electron / Tauri / Pear) still to be chosen
-└── ui/            Reusable components + theme
+│                    NodeSqliteDatabase, NoopHaptics,
+│                    AlwaysGrantedPermissions) — scaffold ready; audio
+│                    backend (Electron / Tauri / Pear) still to be chosen
+└── ui/
+    ├── components/  ChatBubble, VoiceButton, TextComposer,
+    │                DownloadProgress, settings/NumericSettingRow
+    └── theme/       AppTheme + spacing / radius / typography / status tokens
 ```
 
 ### Design rules
@@ -102,15 +125,19 @@ src/
 
 ### Extending to a new platform
 
-1. Implement `IFileSystem`, `IKeyValueStore`, `IDatabase`, `IAudioRecorder`,
-   `IAudioPlayer` in `src/platform/<target>/`.
+1. Implement the required ports in `src/platform/<target>/`:
+   - `IFileSystem`, `IKeyValueStore`, `IDatabase`, `IAudioRecorder`,
+     `IAudioPlayer`, `IHaptics`, `IPermissions`, `INetworkInfo`.
 2. Write `src/platform/<target>/bootstrap.ts` that instantiates each adapter
    and calls `registerPlatform()`.
 3. Wire the bootstrap into the target's entry point.
 4. Provide a `Platform.ts` factory that returns the audio adapters to
    `VoicePipeline` (mirrors `src/platform/mobile/Platform.ts`).
 
-The core, repositories, and UI logic do not need to change.
+`FetchNetworkInfo` (in `src/core/net/`) is a default implementation of
+`INetworkInfo` that works anywhere `fetch` + `AbortController` are available;
+both mobile and desktop reuse it. The core, repositories, UI components, and
+Zustand stores do not need to change.
 
 ### Desktop status (Windows / macOS / Linux)
 

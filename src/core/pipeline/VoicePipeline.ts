@@ -94,6 +94,34 @@ export class VoicePipeline {
     this.setPhase('IDLE');
   }
 
+  /**
+   * Barge-in: interrupt ongoing TTS playback (and the LLM generation feeding
+   * it) and return to IDLE without discarding conversation history. Safe to
+   * call from any phase; no-op when already IDLE or LISTENING.
+   */
+  async interrupt(): Promise<void> {
+    if (this.phase === 'IDLE' || this.phase === 'LISTENING') return;
+    this.isCancelled = true;
+    this.abortTts();
+    this.setPhase('IDLE');
+  }
+
+  /**
+   * Text fallback: feeds the LLM directly with a typed user message, bypassing
+   * STT. Mirrors the post-transcription path (emit SttFinal so the UI persists
+   * the user turn, then stream the response through TTS). No-op when busy.
+   */
+  async sendText(text: string): Promise<void> {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (this.phase !== 'IDLE') return;
+
+    this.isCancelled = false;
+    this.ttsAborted = false;
+    this.callbacks.onSttFinal(trimmed);
+    await this.generate(trimmed);
+  }
+
   // ---- Listen phase ------------------------------------------------------
 
   private async listen(): Promise<void> {

@@ -12,23 +12,17 @@ interface Props {
   isDone: boolean;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
 export function DownloadProgressItem({ label, progress, isDone }: Props) {
+  const pct = progress ? Math.round(progress.percentage) : 0;
   return (
     <View style={styles.item}>
       <View style={styles.row}>
-        <Text variant="bodyMedium" style={styles.label}>
-          {isDone ? '\u2713 ' : ''}{label}
+        <Text variant="bodyMedium" style={styles.label} numberOfLines={1}>
+          {label}
         </Text>
-        {progress && !isDone && (
-          <Text variant="bodySmall" style={styles.size}>
-            {formatBytes(progress.bytesDownloaded)} / {formatBytes(progress.totalBytes)}
-          </Text>
-        )}
+        <Text variant="bodySmall" style={styles.size}>
+          {isDone ? '\u2713' : `${pct}%`}
+        </Text>
       </View>
       {!isDone && (
         <ProgressBar
@@ -43,23 +37,27 @@ export function DownloadProgressItem({ label, progress, isDone }: Props) {
 
 const styles = StyleSheet.create({
   item: {
-    gap: 6,
-    paddingVertical: 8,
+    gap: AppTheme.spacing.xs,
+    paddingVertical: AppTheme.spacing.sm,
   },
   row: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: AppTheme.spacing.sm,
   },
   label: {
     color: AppTheme.colors.onBackground,
+    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
   },
   size: {
     color: AppTheme.colors.outline,
+    flexShrink: 0,
   },
   bar: {
     height: 4,
-    borderRadius: 2,
+    borderRadius: AppTheme.radius.sm,
     backgroundColor: AppTheme.colors.surfaceVariant,
   },
 });

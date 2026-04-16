@@ -60,6 +60,15 @@ export const AppConfig = {
     minValidFileSizeBytes: 1024,
   },
 
+  // Connectivity probe — used before starting a model download to warn the
+  // user when they are offline. The endpoint should answer with any 2xx/3xx
+  // response to a HEAD request. `generate_204` is a captive-portal probe
+  // target served globally by Google: small, no body, long-term stable.
+  network: {
+    probeUrl: 'https://www.google.com/generate_204',
+    probeTimeoutMs: 3000,
+  },
+
   // Conversation management
   conversation: {
     defaultTitle: 'New Conversation',

@@ -70,11 +70,80 @@ npm run typecheck
 ```
 
 If UI changed, manually validate on an Android device; automated UI tests do
-not exist yet. Release build command:
+not exist yet. See the **Android release build & verify** section below for
+the standalone-APK workflow that survives USB disconnect.
+
+## Android release build & verify (standalone APK)
+
+Standard incremental rebuild — Gradle picks up JS/RN changes automatically
+through `createBundleReleaseJsAndAssets` once the source tree changes:
 
 ```bash
-npx expo run:android --variant release
+cd android && ./gradlew assembleRelease
+adb install -r android/app/build/outputs/apk/release/app-release.apk
 ```
+
+The APK is **standalone**: it embeds the JS bundle (`assets/index.android.bundle`,
+Hermes bytecode) so the app keeps working after USB disconnect — no Metro
+dependency. Do **not** use `npx expo run:android --variant release` as the only
+check; it can leave Metro listening on localhost and mask bundle-freshness
+issues.
+
+### Native-config changes require prebuild
+
+If you touch `app.json`, install a new Expo plugin, or change anything that
+affects `AndroidManifest.xml` / native Gradle config, you MUST regenerate the
+native project first:
+
+```bash
+npx expo prebuild --platform android
+```
+
+Skipping this is the most common cause of "I rebuilt but my change isn't in
+the APK." Typical triggers: adding `expo-splash-screen`, changing `package`,
+editing splash/icon assets, changing permissions.
+
+### Verifying the APK actually contains your changes
+
+`FROM-CACHE` / `UP-TO-DATE` in the Gradle log does **not** mean your JS
+changes shipped — it means Gradle believed the cache key matched. The
+authoritative check is to grep the embedded Hermes bundle for a unique
+string from your change:
+
+```bash
+unzip -p android/app/build/outputs/apk/release/app-release.apk \
+  assets/index.android.bundle > /tmp/b.hbc
+grep -c -a "SOME_UNIQUE_STRING_FROM_YOUR_EDIT" /tmp/b.hbc   # must be > 0
+```
+
+If the count is 0, the bundle is stale. Clean and retry:
+
+```bash
+rm -rf android/app/build android/app/.cxx android/build
+cd android && ./gradlew assembleRelease
+```
+
+### Troubleshooting "I see the old UI"
+
+Checklist, in order, before blaming cache:
+
+1. **Screen state** — `adb shell dumpsys power | grep mWakefulness`. If
+   `Dozing`, the screenshot will be solid black. Wake with
+   `adb shell input keyevent KEYCODE_WAKEUP`.
+2. **Foreground window** — `adb shell dumpsys window | grep mCurrentFocus`.
+   If it says `NotificationShade` or another app, the JarvisQVAC UI isn't
+   actually visible.
+3. **Fresh bundle** — verify with the `grep -c -a` trick above.
+4. **Splash screen stuck** — if a centered icon floats mid-screen over the
+   real UI, `expo-splash-screen` isn't hiding. We call
+   `SplashScreen.preventAutoHideAsync()` + `hideAsync()` in
+   `src/app/_layout.tsx`; don't remove it.
+5. **Two apps installed** — `adb shell pm list packages | grep jarvis`. The
+   current package is `com.anonymous.jarvisqvac`. A legacy
+   `com.jarvis.assistant` may coexist; the launcher icon is ambiguous.
+
+Only after 1–5 check out should you reach for a full clean
+(`adb uninstall com.anonymous.jarvisqvac` + wipe `android/app/build`).
 
 ## Commit style
 

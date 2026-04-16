@@ -9,6 +9,9 @@ import { registerPlatform } from '@core/platform/PlatformContainer';
 import { NodeFileSystem } from './NodeFileSystem';
 import { JsonFileKeyValueStore } from './JsonFileKeyValueStore';
 import { NodeSqliteDatabase } from './NodeSqliteDatabase';
+import { NoopHaptics } from './NoopHaptics';
+import { AlwaysGrantedPermissions } from './AlwaysGrantedPermissions';
+import { FetchNetworkInfo } from '@core/net/FetchNetworkInfo';
 import { getAppDataDirectory } from './paths';
 
 let bootstrapped = false;
@@ -24,6 +27,9 @@ export async function bootstrapDesktop(): Promise<void> {
     fileSystem: new NodeFileSystem(),
     keyValueStore: new JsonFileKeyValueStore(baseDirectory),
     database,
+    haptics: new NoopHaptics(),
+    permissions: new AlwaysGrantedPermissions(),
+    networkInfo: new FetchNetworkInfo(),
   });
 
   bootstrapped = true;

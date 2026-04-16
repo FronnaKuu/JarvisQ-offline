@@ -52,3 +52,6 @@ yarn-error.*
 modules/*/android/build/
 modules/*/android/.gradle/
 modules/*/android/.cxx/
+
+# Local debug screenshots
+screen*.png
