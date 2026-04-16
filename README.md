@@ -1,0 +1,152 @@
+# JarvisQVAC
+
+On-device, private voice assistant built as an extension of the
+[Tether QVAC SDK](https://github.com/tetherto/qvac-sdk). Runs the full STT →
+LLM → TTS pipeline locally: no data leaves the device.
+
+Currently ships as an Expo + React Native application targeting Android. The
+codebase is structured as a **hexagonal / ports-and-adapters** architecture so
+the same core can be wired to additional runtimes (iOS, Windows, macOS, Linux)
+by adding a new platform adapter — see [Architecture](#architecture).
+
+---
+
+## Features
+
+- **Speech-to-text** — Whisper (tiny / base / small / large-v3-turbo) or
+  Parakeet TDT v3 (25 languages, INT8 or FP32).
+- **Large language model** — Qwen3 1.7B / 4B (GGUF, llama.cpp).
+- **Text-to-speech** — Supertonic ONNX (44.1 kHz, multi-voice).
+- **P2P model distribution** via Hyperswarm registry with **HTTPS fallback**
+  to HuggingFace. TTS fallback handles split `.onnx` + `.onnx_data` files
+  correctly by pre-downloading with original filenames.
+- **Voice activity detection** based on `expo-av` metering with configurable
+  speech/silence thresholds.
+- **Conversation persistence** with SQLite (history, per-conversation model
+  settings, streaming-aware message updates).
+
+---
+
+## Quick start
+
+### Prerequisites
+
+- Node.js ≥ 20
+- Expo SDK 54 tooling (`npm i -g expo`)
+- Android Studio + SDK for Android builds
+- An Android device or emulator with ≥ 6 GB RAM (LLM + STT + TTS running
+  concurrently pin ~3.5 GB at steady state)
+
+### Install
+
+```bash
+npm install
+npx expo prebuild
+```
+
+### Run a debug build (hot reload)
+
+```bash
+npm run android
+```
+
+### Build and install a standalone release APK
+
+```bash
+npx expo run:android --variant release
+```
+
+The release APK bundles the JS, so the app runs without a Metro connection.
+
+---
+
+## Architecture
+
+```
+src/
+├── app/           Expo Router screens (delivery layer)
+├── core/          Platform-agnostic business logic
+│   ├── config/      AppConfig, ModelConfig, HttpModelSources
+│   ├── inference/   SttService, LlmService, TtsService (SDK wrappers)
+│   ├── pipeline/    VoicePipeline state machine
+│   ├── ports/       IAudioRecorder, IAudioPlayer, IFileSystem,
+│   │                IKeyValueStore, IDatabase — cross-platform contracts
+│   ├── platform/    PlatformContainer (service locator for adapters)
+│   └── utils/       Pure helpers (loadWithFallback, downloadTtsWithCompanions)
+├── data/          Repositories + row mappers (depend on IDatabase only)
+├── domain/        Zustand stores + domain types
+├── platform/
+│   └── mobile/      Expo adapters (ExpoAudioRecorder, ExpoFileSystem,
+│                    ExpoSqliteDatabase, AsyncStorageKeyValueStore,
+│                    bootstrap.ts — registers adapters into the container)
+└── ui/            Reusable components + theme
+```
+
+### Design rules
+
+1. **`src/core/` is platform-free.** No import of `expo-*`, `react-native-*`,
+   `@react-native-*`, or Node-only modules is allowed in the core. Platform
+   capabilities are consumed through the ports under `src/core/ports/`.
+2. **`@qvac/sdk` is used directly**, not wrapped. Upgrading the SDK is a
+   one-line `package.json` bump; no shim layer to maintain.
+3. **Adapters live under `src/platform/<target>/`.** Adding a new target means
+   implementing the five ports and writing a matching `bootstrap.ts` that
+   calls `registerPlatform()` from `@core/platform/PlatformContainer`.
+4. **Repositories depend on `IDatabase`** — not on `expo-sqlite`. Swapping to
+   `better-sqlite3` on desktop requires one new adapter.
+5. **No hardcoded filesystem paths.** All paths derive from
+   `IFileSystem.documentDirectory` + `AppConfig.models.directoryName`.
+
+### Extending to a new platform
+
+1. Implement `IFileSystem`, `IKeyValueStore`, `IDatabase`, `IAudioRecorder`,
+   `IAudioPlayer` in `src/platform/<target>/`.
+2. Write `src/platform/<target>/bootstrap.ts` that instantiates each adapter
+   and calls `registerPlatform()`.
+3. Wire the bootstrap into the target's entry point.
+4. Provide a `Platform.ts` factory that returns the audio adapters to
+   `VoicePipeline` (mirrors `src/platform/mobile/Platform.ts`).
+
+The core, repositories, and UI logic do not need to change.
+
+---
+
+## Model configuration
+
+Model selection is profile-driven via `src/core/config/ModelConfig.ts`. Each
+profile exposes `buildLoadConfig()` (registry / P2P source) and optionally
+`buildHttpFallbackConfig()` (HuggingFace HTTPS URLs pinned to a commit SHA).
+
+Supported profiles:
+
+| Kind | Default | Alternatives |
+|------|---------|--------------|
+| STT  | `parakeet_tdt_int8` | `whisper_{tiny,base,small,large_v3_turbo}`, `parakeet_tdt_fp32` |
+| LLM  | `qwen3_1_7b`        | `qwen3_4b` |
+| TTS  | `supertonic_en`     | — |
+
+---
+
+## Compatibility
+
+JarvisQVAC tracks **`@qvac/sdk` 0.8.x**. The SDK is loaded as a regular
+dependency with no local fork or patch — see `package.json`. This project
+is a *consumer* of QVAC, not a fork of it.
+
+---
+
+## Contributing
+
+Run the checks before opening a PR:
+
+```bash
+npm run typecheck
+```
+
+Code style: English identifiers and comments, two-space indent, no default
+exports except for React components. Keep platform leaks out of `src/core/`;
+extend the ports instead.
+
+## License
+
+TBD.
