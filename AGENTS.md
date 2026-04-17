@@ -16,7 +16,11 @@ for the full architecture map.
 
 1. **Do not fork or wrap `@qvac/sdk`.** It is consumed directly from
    `node_modules`. Upgrading must remain a `package.json` bump — never add a
-   compatibility shim that requires maintenance on SDK updates.
+   compatibility shim that requires maintenance on SDK updates. The one
+   sanctioned exception is `patches/@qvac+sdk+<version>.patch`, applied
+   automatically via `patch-package` in `postinstall`; when bumping the SDK,
+   refresh the patch (or drop it if upstream fixed the issue) rather than
+   introducing wrapper code.
 2. **`src/core/` is platform-free.** No `expo-*`, `react-native-*`,
    `@react-native-*`, Node-only, or Bare-only imports are permitted in
    `src/core/`. New capabilities enter the core only through a port under
@@ -59,6 +63,11 @@ add methods when a real consumer needs them.
   `documentDirectory`.
 - `IKeyValueStore` — `getItem` / `setItem` / `removeItem`.
 - `IDatabase` — `exec`, `run`, `getFirst`, `getAll`.
+- `IHaptics` — short tactile feedback for UI events.
+- `IPermissions` — runtime permission checks/requests (microphone today).
+- `INetworkInfo` — reachability probe used by `loadWithFallback` to decide
+  between P2P registry and HTTPS fallback. A fetch-based default lives in
+  `src/core/net/FetchNetworkInfo.ts` and is reused by both mobile and desktop.
 
 ### TTS engine contract (`ITtsService`)
 

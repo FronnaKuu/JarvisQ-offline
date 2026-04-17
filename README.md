@@ -114,8 +114,9 @@ src/
 │   │                runtime when AppSettings.ttsEngine === 'system')
 │   └── desktop/     Node adapters (NodeFileSystem, JsonFileKeyValueStore,
 │                    NodeSqliteDatabase, NoopHaptics,
-│                    AlwaysGrantedPermissions) — scaffold ready; audio
-│                    backend (Electron / Tauri / Pear) still to be chosen
+│                    AlwaysGrantedPermissions) + Electron IPC audio bridge
+│                    (IpcAudioRecorder/Player main-side,
+│                    WebAudioRecorder/Player renderer-side)
 └── ui/
     ├── components/  ChatBubble, VoiceButton, TextComposer,
     │                DownloadProgress, settings/NumericSettingRow
@@ -130,8 +131,10 @@ src/
 2. **`@qvac/sdk` is used directly**, not wrapped. Upgrading the SDK is a
    one-line `package.json` bump; no shim layer to maintain.
 3. **Adapters live under `src/platform/<target>/`.** Adding a new target means
-   implementing the five ports and writing a matching `bootstrap.ts` that
-   calls `registerPlatform()` from `@core/platform/PlatformContainer`.
+   implementing the eight ports (`IAudioRecorder`, `IAudioPlayer`,
+   `IFileSystem`, `IKeyValueStore`, `IDatabase`, `IHaptics`, `IPermissions`,
+   `INetworkInfo`) and writing a matching `bootstrap.ts` that calls
+   `registerPlatform()` from `@core/platform/PlatformContainer`.
 4. **Repositories depend on `IDatabase`** — not on `expo-sqlite`. Swapping to
    `better-sqlite3` on desktop requires one new adapter.
 5. **No hardcoded filesystem paths.** All paths derive from
@@ -206,8 +209,10 @@ Supported profiles:
 ## Compatibility
 
 JarvisQVAC tracks **`@qvac/sdk` 0.8.x**. The SDK is loaded as a regular
-dependency with no local fork or patch — see `package.json`. This project
-is a *consumer* of QVAC, not a fork of it.
+dependency and kept unforked. A small `patches/@qvac+sdk+<version>.patch` is
+applied via `patch-package` on `postinstall` for targeted upstream fixes; it
+is refreshed or dropped on each SDK bump, never grown into a wrapper layer.
+This project is a *consumer* of QVAC, not a fork of it.
 
 ---
 

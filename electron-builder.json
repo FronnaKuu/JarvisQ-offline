@@ -11,10 +11,21 @@
   },
   "files": [
     "build/desktop/**/*",
-    "node_modules/@qvac/**/*",
-    "node_modules/bare-*/**/*",
     "qvac/**/*",
-    "package.json"
+    "package.json",
+    "!node_modules/@qvac/diffusion-cpp/**/*",
+    "!node_modules/@qvac/embed-llamacpp/**/*",
+    "!node_modules/@qvac/ocr-onnx/**/*",
+    "!node_modules/@qvac/*/prebuilds/android-*/**/*",
+    "!node_modules/@qvac/*/prebuilds/ios-*/**/*",
+    "!node_modules/@qvac/*/prebuilds/darwin-*/**/*",
+    "!node_modules/@qvac/*/prebuilds/linux-*/**/*",
+    "!node_modules/@qvac/*/prebuilds/win32-arm64/**/*",
+    "!node_modules/bare-*/prebuilds/android-*/**/*",
+    "!node_modules/bare-*/prebuilds/ios-*/**/*",
+    "!node_modules/bare-*/prebuilds/darwin-*/**/*",
+    "!node_modules/bare-*/prebuilds/linux-*/**/*",
+    "!node_modules/bare-*/prebuilds/win32-arm64/**/*"
   ],
   "asar": false,
   "win": {
