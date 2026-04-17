@@ -38,9 +38,27 @@ export interface ILlmService {
 
 // ─── TTS ─────────────────────────────────────────────────────────────────────
 
+import type { IAudioPlayer } from '@core/ports/IAudioPlayer';
+
+export interface TtsRuntimeOptions {
+  speed?: number;
+  pitch?: number;
+  /** BCP-47 language tag (e.g. "en-US", "it-IT"). Only honored by the system engine. */
+  language?: string;
+}
+
 export interface ITtsService {
   readonly isLoaded: boolean;
-  readonly sampleRate: number;
-  /** Synthesizes text and returns Float32 PCM samples. */
-  synthesize(text: string): Promise<Float32Array>;
+  /**
+   * Synthesizes and plays a chunk of text. Resolves when playback finishes.
+   * Engines that return PCM use the provided audioPlayer; engines with their
+   * own native playback (system TTS) may ignore it.
+   */
+  speak(
+    text: string,
+    audioPlayer: IAudioPlayer,
+    options?: TtsRuntimeOptions,
+  ): Promise<void>;
+  /** Aborts ongoing playback/synthesis without unloading the engine. */
+  stop(): Promise<void>;
 }

@@ -1,13 +1,13 @@
 // ---- Settings Screen -----------------------------------------------------
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Linking, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Divider, Switch, Text, TextInput } from 'react-native-paper';
+import { Button, Divider, SegmentedButtons, Switch, Text, TextInput } from 'react-native-paper';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { NumericSettingRow } from '@ui/components/settings/NumericSettingRow';
 import { AppTheme } from '@ui/theme/theme';
-import type { AppSettings } from '@domain/types';
+import type { AppSettings, TtsBufferMode, TtsEngineId } from '@domain/types';
 
 const SYSTEM_PROMPT_DEBOUNCE_MS = 600;
 
@@ -18,6 +18,7 @@ export default function SettingsScreen() {
   const [systemPrompt, setSystemPrompt] = useState(settings.llmSystemPrompt);
   const [sttLanguage, setSttLanguage] = useState(settings.sttLanguage);
   const [ttsVoice, setTtsVoice] = useState(settings.ttsVoice);
+  const [ttsSystemLanguage, setTtsSystemLanguage] = useState(settings.ttsSystemLanguage);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(
@@ -97,19 +98,103 @@ export default function SettingsScreen() {
         <Text variant="titleMedium" style={styles.sectionTitle}>
           Text-to-speech
         </Text>
-        <TextInput
-          label="Voice"
-          value={ttsVoice}
-          onChangeText={(text) => {
-            setTtsVoice(text);
-            scheduleUpdate({ ttsVoice: text });
-          }}
-          mode="outlined"
-          outlineColor={AppTheme.colors.surfaceVariant}
-          activeOutlineColor={AppTheme.colors.primary}
-          textColor={AppTheme.colors.onBackground}
-          style={styles.input}
+
+        <Text variant="bodySmall" style={styles.subLabel}>
+          Engine
+        </Text>
+        <SegmentedButtons
+          value={settings.ttsEngine}
+          onValueChange={(v) => void updateSettings({ ttsEngine: v as TtsEngineId })}
+          buttons={[
+            { value: 'supertonic', label: 'Supertonic' },
+            { value: 'system', label: 'System (Google)' },
+          ]}
+          style={styles.segmented}
         />
+        <Text variant="bodySmall" style={styles.helper}>
+          Supertonic: on-device ONNX, English only. System: uses the
+          Android/iOS native engine (Google TTS, Samsung, etc.) with any
+          language installed on the device. Runs on a separate native thread,
+          so it never stalls the LLM token stream.
+        </Text>
+
+        <Text variant="bodySmall" style={styles.subLabel}>
+          Synthesis timing
+        </Text>
+        <SegmentedButtons
+          value={settings.ttsBufferMode}
+          onValueChange={(v) => void updateSettings({ ttsBufferMode: v as TtsBufferMode })}
+          buttons={[
+            { value: 'streaming', label: 'Streaming' },
+            { value: 'buffered', label: 'After reply' },
+          ]}
+          style={styles.segmented}
+        />
+        <Text variant="bodySmall" style={styles.helper}>
+          Streaming speaks each clause while the LLM is still generating.
+          "After reply" waits until the full response is ready — slower to
+          start, but avoids mid-sentence slowdowns on weaker devices.
+        </Text>
+
+        {settings.ttsEngine === 'supertonic' ? (
+          <TextInput
+            label="Voice (Supertonic)"
+            value={ttsVoice}
+            onChangeText={(text) => {
+              setTtsVoice(text);
+              scheduleUpdate({ ttsVoice: text });
+            }}
+            mode="outlined"
+            outlineColor={AppTheme.colors.surfaceVariant}
+            activeOutlineColor={AppTheme.colors.primary}
+            textColor={AppTheme.colors.onBackground}
+            style={styles.input}
+          />
+        ) : (
+          <>
+            <Text variant="bodySmall" style={styles.helper}>
+              The system engine uses the TTS engine, voice and language
+              configured in Android settings. Tap the button below to pick
+              them: any language and voice installed on the device will work
+              (Google TTS, Samsung, etc.).
+            </Text>
+            <Button
+              mode="contained-tonal"
+              icon="cog"
+              onPress={() => {
+                if (Platform.OS === 'android') {
+                  Linking.sendIntent('com.android.settings.TTS_SETTINGS').catch(
+                    () => {
+                      // Some OEMs hide the intent; fall back to general settings.
+                      void Linking.openSettings();
+                    },
+                  );
+                } else {
+                  void Linking.openSettings();
+                }
+              }}
+              style={styles.input}
+            >
+              Open system TTS settings
+            </Button>
+            <TextInput
+              label="Override language (optional, BCP-47)"
+              value={ttsSystemLanguage}
+              onChangeText={(text) => {
+                setTtsSystemLanguage(text);
+                scheduleUpdate({ ttsSystemLanguage: text });
+              }}
+              mode="outlined"
+              placeholder="Leave empty to follow device default"
+              outlineColor={AppTheme.colors.surfaceVariant}
+              activeOutlineColor={AppTheme.colors.primary}
+              textColor={AppTheme.colors.onBackground}
+              autoCapitalize="none"
+              style={styles.input}
+            />
+          </>
+        )}
+
         <NumericSettingRow
           label="Speech speed"
           value={settings.ttsSpeed}
@@ -117,6 +202,14 @@ export default function SettingsScreen() {
           max={2}
           helper="Playback rate multiplier."
           onCommit={(v) => void updateSettings({ ttsSpeed: v })}
+        />
+        <NumericSettingRow
+          label="Pitch"
+          value={settings.ttsPitch}
+          min={0.5}
+          max={2}
+          helper="Voice pitch multiplier. Honored by the system engine; Supertonic ignores it."
+          onCommit={(v) => void updateSettings({ ttsPitch: v })}
         />
 
         <Divider style={styles.divider} />
@@ -185,5 +278,16 @@ const styles = StyleSheet.create({
   about: {
     color: AppTheme.colors.outline,
     lineHeight: 20,
+  },
+  subLabel: {
+    color: AppTheme.colors.outline,
+    marginTop: AppTheme.spacing.sm,
+  },
+  segmented: {
+    marginVertical: AppTheme.spacing.xs,
+  },
+  helper: {
+    color: AppTheme.colors.outline,
+    marginBottom: AppTheme.spacing.sm,
   },
 });

@@ -59,6 +59,9 @@ class SttServiceClass implements ISttService {
   ): Promise<void> {
     if (this.modelId) await this.unload();
 
+    console.log(
+      `[SttService] load engine=${config.engine} gpu=${config.useGpu}`,
+    );
     const primary = buildLoadModelArgs(config);
     const fallback = httpFallbackConfig
       ? buildLoadModelArgs(httpFallbackConfig)

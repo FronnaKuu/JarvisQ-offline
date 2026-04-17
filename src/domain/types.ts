@@ -59,6 +59,9 @@ export interface ModelProgressUpdate {
   overallProgress: number;
 }
 
+export type TtsEngineId = 'supertonic' | 'system';
+export type TtsBufferMode = 'streaming' | 'buffered';
+
 export interface AppSettings {
   sttLanguage: string;
   llmSystemPrompt: string;
@@ -66,5 +69,9 @@ export interface AppSettings {
   llmMaxTokens: number;
   ttsVoice: string;
   ttsSpeed: number;
+  ttsPitch: number;
+  ttsEngine: TtsEngineId;
+  ttsBufferMode: TtsBufferMode;
+  ttsSystemLanguage: string;
   useGpu: boolean;
 }

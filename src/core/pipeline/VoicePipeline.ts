@@ -10,8 +10,14 @@ import { AppConfig } from '@core/config/AppConfig';
 import { captureSnapshot, logLlmStart, logLlmDone } from '@core/utils/PerfLogger';
 import type { IAudioRecorder } from '@core/ports/IAudioRecorder';
 import type { IAudioPlayer } from '@core/ports/IAudioPlayer';
-import type { ISttService, ILlmService, ITtsService, ConversationMessage } from '@core/inference/types';
-import type { PipelinePhase } from '@domain/types';
+import type {
+  ISttService,
+  ILlmService,
+  ITtsService,
+  ConversationMessage,
+  TtsRuntimeOptions,
+} from '@core/inference/types';
+import type { PipelinePhase, TtsBufferMode } from '@domain/types';
 
 export interface PipelineCallbacks {
   onPhaseChange: (phase: PipelinePhase) => void;
@@ -27,6 +33,14 @@ export interface PipelineConfig {
   systemPrompt?: string;
   maxTokens?: number;
   temperature?: number;
+  /**
+   * 'streaming' — synthesize + speak each clause as soon as it's complete
+   *   (lowest time-to-first-audio, but TTS inference runs while the LLM is
+   *   still decoding and can stall token delivery on weaker devices).
+   * 'buffered' — wait for the full LLM response, then synthesize once.
+   */
+  ttsBufferMode?: TtsBufferMode;
+  ttsOptions?: TtsRuntimeOptions;
 }
 
 export interface PipelineServices {
@@ -46,6 +60,8 @@ export class VoicePipeline {
   private isCancelled = false;
   private ttsAborted = false;
   private isDraining = false;
+  private muteTts = false;
+  private autoLoop = true;
   private history: ConversationMessage[] = [];
 
   private readonly recorder: IAudioRecorder;
@@ -76,6 +92,16 @@ export class VoicePipeline {
 
   clearHistory(): void {
     this.history = [];
+  }
+
+  /**
+   * Silent mode: skip TTS synthesis and disable the auto-restart of the STT
+   * listen loop. Used by text/chat mode so the microphone is not reopened and
+   * the assistant reply is shown as text only.
+   */
+  setSilentMode(silent: boolean): void {
+    this.muteTts = silent;
+    this.autoLoop = !silent;
   }
 
   // ---- Public control ----------------------------------------------------
@@ -194,8 +220,12 @@ export class VoicePipeline {
       if (llmDone) this.onSpeakingDone(userText, fullResponse);
     };
 
+    const isBuffered =
+      (this.config.ttsBufferMode ?? 'streaming') === 'buffered';
+
     const streamer = new ClauseStreamer((clause) => {
       clauses.push(clause);
+      if (this.muteTts || isBuffered) return;
       if (!ttsStarted) {
         ttsStarted = true;
         this.setPhase('SPEAKING');
@@ -227,6 +257,17 @@ export class VoicePipeline {
     llmDone = true;
     this.callbacks.onLlmDone(fullResponse);
 
+    if (this.muteTts) {
+      this.onSpeakingDone(userText, fullResponse);
+      return;
+    }
+
+    if (isBuffered && clauses.length > 0 && !this.isCancelled) {
+      this.setPhase('SPEAKING');
+      void this.drainTtsQueue(clauses, onQueueEmpty);
+      return;
+    }
+
     if (clauses.length === 0 && !this.isCancelled) {
       this.onSpeakingDone(userText, fullResponse);
     }
@@ -249,11 +290,12 @@ export class VoicePipeline {
           break;
         }
 
-        const pcm = await this.tts.synthesize(clause);
+        await this.tts.speak(
+          clause,
+          this.audioPlayer,
+          this.config.ttsOptions,
+        );
         if (this.ttsAborted) break;
-
-        this.audioPlayer.addChunk(pcm, this.tts.sampleRate);
-        await this.audioPlayer.playAndClear();
       }
     } catch (err) {
       this.callbacks.onError(
@@ -285,6 +327,11 @@ export class VoicePipeline {
       this.history = this.history.slice(this.history.length - maxTurns * 2);
     }
 
+    if (!this.autoLoop) {
+      this.setPhase('IDLE');
+      return;
+    }
+
     setTimeout(() => {
       if (!this.isCancelled) void this.listen();
     }, AppConfig.pipeline.postSpeakingDelayMs);
@@ -295,6 +342,7 @@ export class VoicePipeline {
   private abortTts(): void {
     this.ttsAborted = true;
     void this.audioPlayer.stop().catch(() => {});
+    void this.tts.stop().catch(() => {});
     this.llm.cancelGeneration();
   }
 

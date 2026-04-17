@@ -1,7 +1,7 @@
 // ---- Conversation Screen -------------------------------------------------
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, KeyboardAvoidingView, Platform as RNPlatform, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Appbar, IconButton, Menu, Snackbar, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +13,7 @@ import { VoicePipeline } from '@core/pipeline/VoicePipeline';
 import { SttService } from '@core/inference/SttService';
 import { LlmService } from '@core/inference/LlmService';
 import { TtsService } from '@core/inference/TtsService';
+import { SystemTtsService } from '@platform/mobile/SystemTtsService';
 import { Platform } from '@platform/mobile/Platform';
 import { useConversationStore } from '@domain/ConversationStore';
 import { useSettingsStore } from '@domain/SettingsStore';
@@ -56,9 +57,10 @@ export default function ConversationScreen() {
     });
     const audioPlayer = Platform.createAudioPlayer();
 
+    const tts = settings.ttsEngine === 'system' ? SystemTtsService : TtsService;
     const pipeline = new VoicePipeline(
       {
-        services: { stt: SttService, llm: LlmService, tts: TtsService },
+        services: { stt: SttService, llm: LlmService, tts },
         recorder,
         audioPlayer,
       },
@@ -99,6 +101,12 @@ export default function ConversationScreen() {
         systemPrompt: activeConversation?.systemPrompt ?? settings.llmSystemPrompt,
         maxTokens: activeConversation?.maxResponseTokens ?? settings.llmMaxTokens,
         temperature: activeConversation?.temperature ?? settings.llmTemperature,
+        ttsBufferMode: settings.ttsBufferMode,
+        ttsOptions: {
+          speed: activeConversation?.ttsSpeed ?? settings.ttsSpeed,
+          pitch: settings.ttsPitch,
+          language: settings.ttsSystemLanguage,
+        },
       },
     );
 
@@ -135,33 +143,41 @@ export default function ConversationScreen() {
 
   const toggleInputMode = useCallback(() => {
     setInputMode((m) => {
-      if (m === 'voice') {
-        void pipelineRef.current?.stopListening();
-        return 'text';
+      const next = m === 'voice' ? 'text' : 'voice';
+      const p = pipelineRef.current;
+      if (p) {
+        if (next === 'text') void p.stopListening();
+        p.setSilentMode(next === 'text');
       }
-      return 'voice';
+      return next;
     });
   }, []);
 
   const showPartial =
     partialText.length > 0 && (phase === 'LISTENING' || phase === 'THINKING');
-  const displayMessages: Message[] = showPartial
-    ? [
-        ...messages,
-        {
-          id: '__partial__',
-          conversationId: activeConversation?.id ?? '',
-          role: 'user',
-          text: partialText,
-          timestampMs: Date.now(),
-          isStreaming: true,
-        },
-      ]
-    : messages;
+  const displayMessages: Message[] = useMemo(() => {
+    if (!showPartial) return messages;
+    return [
+      ...messages,
+      {
+        id: '__partial__',
+        conversationId: activeConversation?.id ?? '',
+        role: 'user',
+        text: partialText,
+        timestampMs: Date.now(),
+        isStreaming: true,
+      },
+    ];
+  }, [messages, showPartial, partialText, activeConversation?.id]);
+
+  const renderItem = useCallback(
+    ({ item }: { item: Message }) => <ChatBubble message={item} />,
+    [],
+  );
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Appbar.Header style={styles.header} elevated={false}>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <Appbar.Header style={styles.header} elevated={false} statusBarHeight={0}>
         <Appbar.Content
           title="JarvisQVAC"
           titleStyle={styles.headerTitle}
@@ -206,11 +222,19 @@ export default function ConversationScreen() {
         </Menu>
       </Appbar.Header>
 
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={RNPlatform.OS === 'ios' ? 'padding' : 'height'}
+      >
       <FlatList
         ref={listRef}
         data={displayMessages}
         keyExtractor={(m) => m.id}
-        renderItem={({ item }) => <ChatBubble message={item} />}
+        renderItem={renderItem}
+        removeClippedSubviews
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        windowSize={7}
         contentContainerStyle={[
           styles.chatContent,
           displayMessages.length === 0 && styles.chatContentEmpty,
@@ -248,7 +272,7 @@ export default function ConversationScreen() {
       <View
         style={[
           styles.controls,
-          { paddingBottom: AppTheme.spacing.lg + insets.bottom },
+          { paddingBottom: AppTheme.spacing.sm + insets.bottom },
         ]}
       >
         {inputMode === 'voice' ? (
@@ -260,6 +284,7 @@ export default function ConversationScreen() {
           />
         )}
       </View>
+      </KeyboardAvoidingView>
 
       <Snackbar
         visible={pipelineError !== null}
@@ -278,7 +303,12 @@ export default function ConversationScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: AppTheme.colors.background },
-  header: { backgroundColor: AppTheme.colors.background, elevation: 0 },
+  flex: { flex: 1 },
+  header: {
+    backgroundColor: AppTheme.colors.background,
+    elevation: 0,
+    height: 48,
+  },
   headerTitle: {
     color: AppTheme.colors.onBackground,
     fontSize: AppTheme.typography.titleMedium.fontSize,
@@ -315,7 +345,7 @@ const styles = StyleSheet.create({
     backgroundColor: AppTheme.colors.surfaceVariant,
   },
   controls: {
-    paddingTop: AppTheme.spacing.xl,
+    paddingTop: AppTheme.spacing.md,
     alignItems: 'center',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: AppTheme.colors.surfaceVariant,

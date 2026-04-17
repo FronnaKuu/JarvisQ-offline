@@ -94,7 +94,10 @@ export class AppBootstrap {
       handlers.onServiceDone?.('llm');
     }
 
-    if (!TtsService.isLoaded) {
+    if (settings.ttsEngine === 'system') {
+      handlers.onServiceStart?.('tts', 'System TTS');
+      handlers.onServiceDone?.('tts');
+    } else if (!TtsService.isLoaded) {
       handlers.onServiceStart?.('tts', ttsProfile.label);
       await TtsService.load(
         ttsProfile.buildLoadConfig(settings.useGpu, settings.ttsSpeed, 'en'),

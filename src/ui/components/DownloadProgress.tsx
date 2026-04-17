@@ -6,14 +6,28 @@ import { ProgressBar, Text } from 'react-native-paper';
 import { AppTheme } from '@ui/theme/theme';
 import type { DownloadProgress } from '@domain/types';
 
+type Phase = 'pending' | 'active' | 'done';
+
 interface Props {
   label: string;
   progress: DownloadProgress | null;
   isDone: boolean;
+  phase?: Phase;
 }
 
-export function DownloadProgressItem({ label, progress, isDone }: Props) {
+function statusText(phase: Phase, pct: number, hasProgress: boolean): string {
+  if (phase === 'done') return '\u2713';
+  if (phase === 'pending') return 'Waiting';
+  if (!hasProgress) return 'Loading\u2026';
+  if (pct >= 100) return 'Finalizing\u2026';
+  return `${pct}%`;
+}
+
+export function DownloadProgressItem({ label, progress, isDone, phase = 'pending' }: Props) {
   const pct = progress ? Math.round(progress.percentage) : 0;
+  const effectivePhase: Phase = isDone ? 'done' : phase;
+  const label2 = statusText(effectivePhase, pct, progress !== null);
+  const indeterminate = effectivePhase === 'active' && progress === null;
   return (
     <View style={styles.item}>
       <View style={styles.row}>
@@ -21,11 +35,12 @@ export function DownloadProgressItem({ label, progress, isDone }: Props) {
           {label}
         </Text>
         <Text variant="bodySmall" style={styles.size}>
-          {isDone ? '\u2713' : `${pct}%`}
+          {label2}
         </Text>
       </View>
       {!isDone && (
         <ProgressBar
+          indeterminate={indeterminate}
           progress={progress ? progress.percentage / 100 : 0}
           style={styles.bar}
           color={AppTheme.colors.primary}

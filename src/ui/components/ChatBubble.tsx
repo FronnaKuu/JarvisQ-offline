@@ -11,7 +11,7 @@ interface Props {
   message: Message;
 }
 
-export function ChatBubble({ message }: Props) {
+function ChatBubbleImpl({ message }: Props) {
   const isUser = message.role === 'user';
   const isPartial = message.id === '__partial__';
   const timestampLabel = isPartial
@@ -36,6 +36,12 @@ export function ChatBubble({ message }: Props) {
     </View>
   );
 }
+
+export const ChatBubble = React.memo(ChatBubbleImpl, (prev, next) => (
+  prev.message.id === next.message.id &&
+  prev.message.text === next.message.text &&
+  prev.message.isStreaming === next.message.isStreaming
+));
 
 const styles = StyleSheet.create({
   wrapper: {

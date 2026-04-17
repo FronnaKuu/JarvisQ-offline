@@ -51,7 +51,13 @@ export const AppConfig = {
   tts: {
     defaultVoice: 'F1',
     defaultSpeed: 1.0,
+    defaultPitch: 1.0,
     defaultLanguage: 'en',
+    defaultEngine: 'supertonic' as const,
+    defaultBufferMode: 'streaming' as const,
+    // Empty string means "follow the device's default TTS language selected
+    // in Android/iOS system settings". Any BCP-47 tag here overrides it.
+    defaultSystemLanguage: '',
   },
 
   // Model storage

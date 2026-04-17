@@ -95,6 +95,9 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
       const conversationStore = useConversationStore.getState();
       if (conversationStore.conversations.length === 0) {
         await conversationStore.createConversation();
+      } else if (!conversationStore.activeConversationId) {
+        const first = conversationStore.conversations[0];
+        if (first) await conversationStore.selectConversation(first.id);
       }
 
       set({ phase: 'ready' });

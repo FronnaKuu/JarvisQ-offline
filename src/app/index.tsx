@@ -75,12 +75,9 @@ export default function Index() {
         <Text variant="displaySmall" style={styles.title}>
           JarvisQVAC
         </Text>
-
-        {isOffline ? (
-          <Text variant="bodySmall" style={styles.offlineText}>
-            Offline — cached models only
-          </Text>
-        ) : null}
+        <Text variant="bodyMedium" style={styles.subtitle}>
+          {isOffline ? 'Offline — loading cached models' : 'Preparing on-device models'}
+        </Text>
 
         <View style={styles.section}>
           {SERVICE_ORDER.map((kind) => {
@@ -91,6 +88,7 @@ export default function Index() {
                 label={service.label || kind.toUpperCase()}
                 progress={toDownloadProgress(service)}
                 isDone={service.phase === 'done'}
+                phase={service.phase}
               />
             );
           })}
@@ -133,9 +131,10 @@ const styles = StyleSheet.create({
     gap: AppTheme.spacing.md,
   },
   errorText: { color: AppTheme.colors.error, textAlign: 'center' },
-  offlineText: {
+  subtitle: {
     color: AppTheme.colors.outline,
     textAlign: 'center',
+    marginTop: -AppTheme.spacing.md,
   },
   button: {
     marginTop: AppTheme.spacing.lg,

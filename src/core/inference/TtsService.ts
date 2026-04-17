@@ -12,7 +12,8 @@ import {
   type TtsLocalPaths,
 } from '@core/utils/downloadTtsWithCompanions';
 import type { IFileSystem } from '@core/ports/IFileSystem';
-import type { ITtsService } from './types';
+import type { IAudioPlayer } from '@core/ports/IAudioPlayer';
+import type { ITtsService, TtsRuntimeOptions } from './types';
 
 export interface TtsLoadConfig {
   tokenizerSrc: string;
@@ -38,6 +39,7 @@ export interface TtsLoadConfig {
 class TtsServiceClass implements ITtsService {
   private modelId: string | null = null;
   private _sampleRate = 44100;
+  private activePlayer: IAudioPlayer | null = null;
 
   get isLoaded(): boolean {
     return this.modelId !== null;
@@ -45,6 +47,24 @@ class TtsServiceClass implements ITtsService {
 
   get sampleRate(): number {
     return this._sampleRate;
+  }
+
+  async speak(
+    text: string,
+    audioPlayer: IAudioPlayer,
+    _options?: TtsRuntimeOptions,
+  ): Promise<void> {
+    const pcm = await this.synthesize(text);
+    this.activePlayer = audioPlayer;
+    audioPlayer.addChunk(pcm, this._sampleRate);
+    await audioPlayer.playAndClear();
+    this.activePlayer = null;
+  }
+
+  async stop(): Promise<void> {
+    const p = this.activePlayer;
+    this.activePlayer = null;
+    if (p) await p.stop().catch(() => {});
   }
 
   async load(
@@ -56,6 +76,9 @@ class TtsServiceClass implements ITtsService {
 
     this._sampleRate = config.sampleRate;
 
+    console.log(
+      `[TtsService] load gpu=${config.useGpu} (note: @qvac/sdk TTS uses ONNX Runtime defaults — no explicit GPU delegate is exposed on this SDK surface)`,
+    );
     const primary = buildLoadModelArgs(config);
 
     try {

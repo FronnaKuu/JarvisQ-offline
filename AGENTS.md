@@ -60,6 +60,23 @@ add methods when a real consumer needs them.
 - `IKeyValueStore` — `getItem` / `setItem` / `removeItem`.
 - `IDatabase` — `exec`, `run`, `getFirst`, `getAll`.
 
+### TTS engine contract (`ITtsService`)
+
+Unlike the other ports, the TTS service is not pinned to one implementation
+at startup — `VoicePipeline` receives the concrete `ITtsService` via
+`PipelineDeps` and the app chooses between `TtsService` (Supertonic) and
+`SystemTtsService` (`expo-speech`) based on `AppSettings.ttsEngine`. The
+interface is intentionally play-oriented (not synthesize-then-play):
+
+- `speak(text, audioPlayer, options?)` — plays text and resolves on
+  completion. PCM engines (Supertonic) write into `audioPlayer`; native
+  engines (System) ignore it and manage their own playback.
+- `stop()` — aborts current playback without unloading.
+
+Do not leak `synthesize() → Float32Array` back onto this port: native
+engines cannot return PCM, and adding it would force branching in
+`VoicePipeline.drainTtsQueue`.
+
 Resolve adapters at runtime through `getPlatform()` from
 `@core/platform/PlatformContainer` — never `new ExpoX()` from a core file.
 
@@ -167,3 +184,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>
   when the dependency is only needed for that call.
 - Do not silently catch errors to hide symptoms. Fix root causes; surface
   unexpected failures.
+- Do not hardcode a TTS language whitelist. The `system` engine picks up
+  whatever language / voice / engine the user has configured in Android's
+  system TTS settings. The Settings screen exposes a shortcut that opens
+  `com.android.settings.TTS_SETTINGS`; leave that flow in place.
+- Do not call `tts.synthesize(...)` / `audioPlayer.addChunk(...)` from
+  `VoicePipeline`. Always go through `tts.speak(clause, audioPlayer, options)`
+  so the system TTS adapter stays interchangeable.

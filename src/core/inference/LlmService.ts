@@ -36,6 +36,9 @@ class LlmServiceClass implements ILlmService {
 
     this.noThink = config.noThink ?? false;
 
+    console.log(
+      `[LlmService] load device=${config.useGpu ? 'gpu' : 'cpu'} model=${config.modelConstant.modelId}`,
+    );
     const primary = buildLoadModelArgs(config);
     const fallback = httpFallbackConfig
       ? buildLoadModelArgs(httpFallbackConfig)

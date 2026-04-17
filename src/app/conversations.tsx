@@ -4,14 +4,14 @@
 // only renders it.
 
 import React, { useCallback, useState } from 'react';
-import { FlatList, StyleSheet, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Appbar,
   Button,
   Dialog,
+  Divider,
   IconButton,
-  List,
   Portal,
   Text,
   TextInput,
@@ -56,10 +56,10 @@ export default function ConversationsListScreen() {
   }, [renameDraft, renameTarget, updateConversation]);
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Appbar.Header style={styles.header} elevated={false}>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <Appbar.Header style={styles.header} elevated={false} statusBarHeight={0}>
         <Appbar.BackAction onPress={() => router.back()} />
-        <Appbar.Content title="Conversations" titleStyle={styles.headerTitle} />
+        <Appbar.Content title="History" titleStyle={styles.headerTitle} />
         <IconButton
           icon="plus"
           iconColor={AppTheme.colors.onBackground}
@@ -72,41 +72,50 @@ export default function ConversationsListScreen() {
         data={conversations}
         keyExtractor={(c) => c.id}
         contentContainerStyle={styles.listContent}
+        ItemSeparatorComponent={() => <Divider style={styles.separator} />}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text variant="bodyMedium" style={styles.emptyText}>
-              No conversations yet. Start a new one with the + button.
+              No conversations yet. Tap + to start.
             </Text>
           </View>
         }
         renderItem={({ item }) => (
-          <List.Item
-            title={item.title}
-            titleStyle={styles.itemTitle}
-            description={new Date(item.lastUpdatedAt).toLocaleString()}
-            descriptionStyle={styles.itemDescription}
+          <Pressable
             onPress={() => void openConversation(item.id)}
+            android_ripple={{ color: AppTheme.colors.surfaceVariant }}
             style={styles.item}
-            right={() => (
-              <View style={styles.actions}>
-                <IconButton
-                  icon="pencil"
-                  iconColor={AppTheme.colors.onSurfaceVariant}
-                  accessibilityLabel="Rename conversation"
-                  onPress={() => {
-                    setRenameTarget(item);
-                    setRenameDraft(item.title);
-                  }}
-                />
-                <IconButton
-                  icon="delete"
-                  iconColor={AppTheme.colors.error}
-                  accessibilityLabel="Delete conversation"
-                  onPress={() => void deleteConversation(item.id)}
-                />
-              </View>
-            )}
-          />
+          >
+            <View style={styles.itemText}>
+              <Text
+                variant="bodyLarge"
+                style={styles.itemTitle}
+                numberOfLines={1}
+              >
+                {item.title}
+              </Text>
+              <Text variant="bodySmall" style={styles.itemDescription}>
+                {new Date(item.lastUpdatedAt).toLocaleString()}
+              </Text>
+            </View>
+            <IconButton
+              icon="pencil"
+              size={18}
+              iconColor={AppTheme.colors.onSurfaceVariant}
+              accessibilityLabel="Rename conversation"
+              onPress={() => {
+                setRenameTarget(item);
+                setRenameDraft(item.title);
+              }}
+            />
+            <IconButton
+              icon="delete-outline"
+              size={18}
+              iconColor={AppTheme.colors.error}
+              accessibilityLabel="Delete conversation"
+              onPress={() => void deleteConversation(item.id)}
+            />
+          </Pressable>
         )}
       />
 
@@ -137,26 +146,39 @@ export default function ConversationsListScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: AppTheme.colors.background },
-  header: { backgroundColor: AppTheme.colors.background, elevation: 0 },
+  header: {
+    backgroundColor: AppTheme.colors.background,
+    elevation: 0,
+    height: 48,
+  },
   headerTitle: {
     color: AppTheme.colors.onBackground,
     fontSize: AppTheme.typography.titleMedium.fontSize,
     fontWeight: AppTheme.typography.titleMedium.fontWeight,
   },
   listContent: {
-    paddingVertical: AppTheme.spacing.sm,
+    paddingVertical: AppTheme.spacing.xs,
+  },
+  separator: {
+    backgroundColor: AppTheme.colors.surfaceVariant,
+    marginHorizontal: AppTheme.spacing.lg,
+    height: StyleSheet.hairlineWidth,
   },
   item: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: AppTheme.spacing.lg,
+    paddingVertical: AppTheme.spacing.xs,
+  },
+  itemText: {
+    flex: 1,
+    minWidth: 0,
   },
   itemTitle: {
     color: AppTheme.colors.onBackground,
   },
   itemDescription: {
     color: AppTheme.colors.outline,
-  },
-  actions: {
-    flexDirection: 'row',
   },
   empty: {
     padding: AppTheme.spacing.xl,

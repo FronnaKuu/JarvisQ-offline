@@ -39,6 +39,10 @@ const defaultSettings: AppSettings = {
   llmMaxTokens: AppConfig.llm.defaultMaxTokens,
   ttsVoice: AppConfig.tts.defaultVoice,
   ttsSpeed: AppConfig.tts.defaultSpeed,
+  ttsPitch: AppConfig.tts.defaultPitch,
+  ttsEngine: AppConfig.tts.defaultEngine,
+  ttsBufferMode: AppConfig.tts.defaultBufferMode,
+  ttsSystemLanguage: AppConfig.tts.defaultSystemLanguage,
   useGpu: true,
 };
 

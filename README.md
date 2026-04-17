@@ -16,7 +16,19 @@ by adding a new platform adapter — see [Architecture](#architecture).
 - **Speech-to-text** — Whisper (tiny / base / small / large-v3-turbo) or
   Parakeet TDT v3 (25 languages, INT8 or FP32).
 - **Large language model** — Qwen3 1.7B / 4B (GGUF, llama.cpp).
-- **Text-to-speech** — Supertonic ONNX (44.1 kHz, multi-voice).
+- **Text-to-speech** — pluggable engine:
+  - `supertonic` — on-device Supertonic ONNX (44.1 kHz, multi-voice, English
+    only).
+  - `system` — device-native engine through `expo-speech` (Google TTS on
+    Android, AVSpeechSynthesizer on iOS). Language, voice and default engine
+    follow the OS-level TTS settings; the Settings screen exposes an "Open
+    system TTS settings" shortcut that launches the `TTS_SETTINGS` intent.
+  - Per-turn speed and pitch are configurable; the engine accepts runtime
+    `TtsRuntimeOptions` through `ITtsService.speak()`.
+- **TTS timing modes** — `streaming` (low time-to-first-audio, speaks each
+  clause while the LLM is still decoding) or `buffered` (speaks only after
+  the full response is ready — avoids token-stream contention with on-device
+  synthesis on weaker devices).
 - **P2P model distribution** via Hyperswarm registry with **HTTPS fallback**
   to HuggingFace. TTS fallback handles split `.onnx` + `.onnx_data` files
   correctly by pre-downloading with original filenames.
@@ -98,6 +110,8 @@ src/
 │   │                ExpoSqliteDatabase, AsyncStorageKeyValueStore,
 │   │                ExpoPermissions, RnVibrationHaptics,
 │   │                bootstrap.ts — registers adapters into the container)
+│   │                SystemTtsService — expo-speech adapter selected at
+│   │                runtime when AppSettings.ttsEngine === 'system')
 │   └── desktop/     Node adapters (NodeFileSystem, JsonFileKeyValueStore,
 │                    NodeSqliteDatabase, NoopHaptics,
 │                    AlwaysGrantedPermissions) — scaffold ready; audio
@@ -169,7 +183,7 @@ Supported profiles:
 |------|---------|--------------|
 | STT  | `parakeet_tdt_int8` | `whisper_{tiny,base,small,large_v3_turbo}`, `parakeet_tdt_fp32` |
 | LLM  | `qwen3_1_7b`        | `qwen3_4b` |
-| TTS  | `supertonic_en`     | — |
+| TTS  | `supertonic_en`     | `system` (device-native, selected via `AppSettings.ttsEngine`) |
 
 ---
 
