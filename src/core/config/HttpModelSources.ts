@@ -44,25 +44,22 @@ export const QWEN3_4B_HTTP = {
   q4km: hfResolve(QWEN3_4B_REPO, QWEN3_4B_COMMIT, 'qwen3-4b-q4_k_m.gguf'),
 } as const;
 
-// ─── Supertonic TTS (onnx-community/Supertonic-TTS-ONNX) ────────────────────
-// Supertonic ONNX models are split into .onnx (graph) + .onnx_data (weights).
-// The SDK's default HTTP downloader saves files with hash prefixes, preventing
-// ONNX Runtime from finding companion .onnx_data files. The HTTP fallback uses
-// a custom downloader (downloadTtsWithCompanions) that places all files in the
-// same directory with original filenames so ONNX Runtime can resolve them.
+// ─── Supertonic 2 TTS (Supertone/supertonic-2) ─────────────────────────────
+// Supertonic 2 ships each component as a standalone .onnx/.json file — no
+// .onnx_data companion weights — so the SDK's built-in HTTP downloader can
+// fetch them directly (no custom filename preservation needed).
 
-const TTS_REPO = 'onnx-community/Supertonic-TTS-ONNX';
-const TTS_COMMIT = 'cff123c84b0655d9d647641f1b532c3cbb8f7faa';
+const TTS_REPO = 'Supertone/supertonic-2';
+const TTS_COMMIT = '75e6727618a02f323c720cba9478152d4bc16ca4';
 
 export const SUPERTONIC_HTTP = {
-  tokenizer: hfResolve(TTS_REPO, TTS_COMMIT, 'tokenizer.json'),
   textEncoder: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/text_encoder.onnx'),
-  textEncoderData: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/text_encoder.onnx_data'),
-  latentDenoiser: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/latent_denoiser.onnx'),
-  latentDenoiserData: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/latent_denoiser.onnx_data'),
-  voiceDecoder: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/voice_decoder.onnx'),
-  voiceDecoderData: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/voice_decoder.onnx_data'),
-  voiceStyle: hfResolve(TTS_REPO, TTS_COMMIT, 'voices/F1.bin'),
+  durationPredictor: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/duration_predictor.onnx'),
+  vectorEstimator: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/vector_estimator.onnx'),
+  vocoder: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/vocoder.onnx'),
+  unicodeIndexer: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/unicode_indexer.json'),
+  ttsConfig: hfResolve(TTS_REPO, TTS_COMMIT, 'onnx/tts.json'),
+  voiceStyle: hfResolve(TTS_REPO, TTS_COMMIT, 'voice_styles/F1.json'),
 } as const;
 
 // ─── Whisper (ggerganov/whisper.cpp) ─────────────────────────────────────────

@@ -1,39 +1,45 @@
 // ─── TTS Service ─────────────────────────────────────────────────────────────
-// Wraps @qvac/sdk TTS (Supertonic ONNX) implementing ITtsService.
+// Wraps @qvac/sdk TTS (Supertonic 2 ONNX) implementing ITtsService.
 // Converts the SDK's Int16 PCM output to Float32Array for AudioPlayer.
 
 import { loadModel, textToSpeech, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 import { loadWithStallDetection } from '@core/utils/loadWithFallback';
 import type { LoadModelArgs } from '@core/utils/loadWithFallback';
-import {
-  downloadTtsWithCompanions,
-  type TtsCompanionSources,
-  type TtsLocalPaths,
-} from '@core/utils/downloadTtsWithCompanions';
 import type { IFileSystem } from '@core/ports/IFileSystem';
 import type { IAudioPlayer } from '@core/ports/IAudioPlayer';
 import type { ITtsService, TtsRuntimeOptions } from './types';
 
 export interface TtsLoadConfig {
-  tokenizerSrc: string;
   textEncoderSrc: string;
-  latentDenoiserSrc: string;
-  voiceDecoderSrc: string;
-  voiceSrc: string;
+  durationPredictorSrc: string;
+  vectorEstimatorSrc: string;
+  vocoderSrc: string;
+  unicodeIndexerSrc: string;
+  ttsConfigSrc: string;
+  voiceStyleSrc: string;
   language: 'en' | 'de' | 'es' | 'it';
   speed: number;
   sampleRate: number;
   useGpu: boolean;
+  numInferenceSteps?: number;
+  supertonicMultilingual?: boolean;
   /**
-   * Optional HTTP fallback sources including .onnx_data companion files.
-   * When provided and the primary load stalls, all files (including companions)
-   * are downloaded to a dedicated directory with original filenames, then
-   * passed to loadModel as local paths. Required for Supertonic TTS HTTP
-   * fallback because the SDK's default HTTP downloader strips filenames via
-   * hash prefixing, breaking ONNX Runtime's companion file resolution.
+   * Optional HTTPS fallback sources. When provided and the primary (P2P) load
+   * stalls, the SDK is retried with these URLs as `src` strings. Supertonic 2
+   * components are standalone .onnx/.json files (no .onnx_data companions), so
+   * the SDK's built-in HTTP downloader handles them without the custom
+   * companion-resolution logic required by the old Supertonic 1 schema.
    */
-  httpCompanionSources?: TtsCompanionSources;
+  httpFallback?: {
+    textEncoderSrc: string;
+    durationPredictorSrc: string;
+    vectorEstimatorSrc: string;
+    vocoderSrc: string;
+    unicodeIndexerSrc: string;
+    ttsConfigSrc: string;
+    voiceStyleSrc: string;
+  };
 }
 
 class TtsServiceClass implements ITtsService {
@@ -69,7 +75,7 @@ class TtsServiceClass implements ITtsService {
 
   async load(
     config: TtsLoadConfig,
-    deps: { fileSystem: IFileSystem },
+    _deps: { fileSystem: IFileSystem },
     onProgress?: (p: ModelProgressUpdate) => void,
   ): Promise<void> {
     if (this.modelId) await this.unload();
@@ -87,23 +93,13 @@ class TtsServiceClass implements ITtsService {
     } catch (err) {
       const isStall =
         err instanceof Error && err.message === 'DOWNLOAD_STALLED';
-      if (!isStall || !config.httpCompanionSources) throw err;
+      if (!isStall || !config.httpFallback) throw err;
       console.warn(
-        '[TtsService] P2P download stalled, switching to HTTPS companion fallback',
+        '[TtsService] P2P download stalled, switching to HTTPS fallback',
       );
     }
 
-    // HTTP fallback: pre-download .onnx + .onnx_data companions with original
-    // filenames so ONNX Runtime can resolve them, then pass local paths.
-    const localPaths = await downloadTtsWithCompanions(
-      deps.fileSystem,
-      config.httpCompanionSources,
-      onProgress,
-    );
-    const fallbackArgs = buildLoadModelArgs({
-      ...config,
-      ...localPathsToConfig(localPaths),
-    });
+    const fallbackArgs = buildLoadModelArgs({ ...config, ...config.httpFallback });
     this.modelId = await (loadModel as Function)({
       ...fallbackArgs,
       onProgress,
@@ -143,29 +139,23 @@ class TtsServiceClass implements ITtsService {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function localPathsToConfig(p: TtsLocalPaths): Partial<TtsLoadConfig> {
-  return {
-    tokenizerSrc: p.tokenizerPath,
-    textEncoderSrc: p.textEncoderPath,
-    latentDenoiserSrc: p.latentDenoiserPath,
-    voiceDecoderSrc: p.voiceDecoderPath,
-    voiceSrc: p.voiceStylePath,
-  };
-}
-
 function buildLoadModelArgs(config: TtsLoadConfig): LoadModelArgs {
   return {
-    modelSrc: config.tokenizerSrc,
-    modelType: 'tts',
+    modelSrc: config.textEncoderSrc,
+    modelType: 'onnx-tts',
     modelConfig: {
       ttsEngine: 'supertonic' as const,
       language: config.language,
       ttsSpeed: config.speed,
-      ttsTokenizerSrc: config.tokenizerSrc,
+      ttsNumInferenceSteps: config.numInferenceSteps ?? 5,
+      ttsSupertonicMultilingual: config.supertonicMultilingual ?? true,
       ttsTextEncoderSrc: config.textEncoderSrc,
-      ttsLatentDenoiserSrc: config.latentDenoiserSrc,
-      ttsVoiceDecoderSrc: config.voiceDecoderSrc,
-      ttsVoiceSrc: config.voiceSrc,
+      ttsDurationPredictorSrc: config.durationPredictorSrc,
+      ttsVectorEstimatorSrc: config.vectorEstimatorSrc,
+      ttsVocoderSrc: config.vocoderSrc,
+      ttsUnicodeIndexerSrc: config.unicodeIndexerSrc,
+      ttsTtsConfigSrc: config.ttsConfigSrc,
+      ttsVoiceStyleSrc: config.voiceStyleSrc,
     },
   };
 }

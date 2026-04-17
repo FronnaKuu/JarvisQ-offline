@@ -10,11 +10,13 @@ import {
   WHISPER_LARGE_V3_TURBO,
   QWEN3_1_7B_INST_Q4,
   QWEN3_4B_INST_Q4_K_M,
-  TTS_TOKENIZER_SUPERTONIC,
-  TTS_TEXT_ENCODER_SUPERTONIC_FP32,
-  TTS_LATENT_DENOISER_SUPERTONIC_FP32,
-  TTS_VOICE_DECODER_SUPERTONIC_FP32,
-  TTS_VOICE_STYLE_SUPERTONIC,
+  TTS_SUPERTONIC2_OFFICIAL_TEXT_ENCODER_SUPERTONE_FP32,
+  TTS_SUPERTONIC2_OFFICIAL_DURATION_PREDICTOR_SUPERTONE_FP32,
+  TTS_SUPERTONIC2_OFFICIAL_VECTOR_ESTIMATOR_SUPERTONE_FP32,
+  TTS_SUPERTONIC2_OFFICIAL_VOCODER_SUPERTONE_FP32,
+  TTS_SUPERTONIC2_OFFICIAL_UNICODE_INDEXER_SUPERTONE_FP32,
+  TTS_SUPERTONIC2_OFFICIAL_TTS_CONFIG_SUPERTONE,
+  TTS_SUPERTONIC2_OFFICIAL_VOICE_STYLE_SUPERTONE,
   PARAKEET_TDT_ENCODER_INT8,
   PARAKEET_TDT_DECODER_INT8,
   PARAKEET_TDT_PREPROCESSOR_INT8,
@@ -284,36 +286,38 @@ export interface TtsProfile {
 }
 
 export const TTS_PROFILES: Record<string, TtsProfile> = {
-  supertonic_en: {
-    id: 'supertonic_en',
-    label: 'Supertonic TTS (~250 MB)',
-    estimatedBytes: 251_000_000,
+  supertonic2: {
+    id: 'supertonic2',
+    label: 'Supertonic 2 TTS — multilingual (~265 MB)',
+    // Sum of FP32 component sizes (text encoder + duration predictor +
+    // vector estimator + vocoder + unicode indexer + tts config + voice style).
+    estimatedBytes: 263_000_000,
     sampleRate: 44100,
     buildLoadConfig: (useGpu, speed, language) => ({
-      tokenizerSrc: TTS_TOKENIZER_SUPERTONIC.src,
-      textEncoderSrc: TTS_TEXT_ENCODER_SUPERTONIC_FP32.src,
-      latentDenoiserSrc: TTS_LATENT_DENOISER_SUPERTONIC_FP32.src,
-      voiceDecoderSrc: TTS_VOICE_DECODER_SUPERTONIC_FP32.src,
-      voiceSrc: TTS_VOICE_STYLE_SUPERTONIC.src,
+      textEncoderSrc: TTS_SUPERTONIC2_OFFICIAL_TEXT_ENCODER_SUPERTONE_FP32.src,
+      durationPredictorSrc: TTS_SUPERTONIC2_OFFICIAL_DURATION_PREDICTOR_SUPERTONE_FP32.src,
+      vectorEstimatorSrc: TTS_SUPERTONIC2_OFFICIAL_VECTOR_ESTIMATOR_SUPERTONE_FP32.src,
+      vocoderSrc: TTS_SUPERTONIC2_OFFICIAL_VOCODER_SUPERTONE_FP32.src,
+      unicodeIndexerSrc: TTS_SUPERTONIC2_OFFICIAL_UNICODE_INDEXER_SUPERTONE_FP32.src,
+      ttsConfigSrc: TTS_SUPERTONIC2_OFFICIAL_TTS_CONFIG_SUPERTONE.src,
+      voiceStyleSrc: TTS_SUPERTONIC2_OFFICIAL_VOICE_STYLE_SUPERTONE.src,
       language,
       speed,
       sampleRate: 44100,
       useGpu,
-      // HTTPS fallback: pre-downloads .onnx + .onnx_data with original filenames
-      // so ONNX Runtime can resolve companion weights (the SDK's built-in HTTP
-      // downloader hash-prefixes filenames, which breaks companion resolution).
-      httpCompanionSources: {
-        tokenizer: SUPERTONIC_HTTP.tokenizer,
-        textEncoder: SUPERTONIC_HTTP.textEncoder,
-        textEncoderData: SUPERTONIC_HTTP.textEncoderData,
-        latentDenoiser: SUPERTONIC_HTTP.latentDenoiser,
-        latentDenoiserData: SUPERTONIC_HTTP.latentDenoiserData,
-        voiceDecoder: SUPERTONIC_HTTP.voiceDecoder,
-        voiceDecoderData: SUPERTONIC_HTTP.voiceDecoderData,
-        voiceStyle: SUPERTONIC_HTTP.voiceStyle,
+      numInferenceSteps: 5,
+      supertonicMultilingual: true,
+      httpFallback: {
+        textEncoderSrc: SUPERTONIC_HTTP.textEncoder,
+        durationPredictorSrc: SUPERTONIC_HTTP.durationPredictor,
+        vectorEstimatorSrc: SUPERTONIC_HTTP.vectorEstimator,
+        vocoderSrc: SUPERTONIC_HTTP.vocoder,
+        unicodeIndexerSrc: SUPERTONIC_HTTP.unicodeIndexer,
+        ttsConfigSrc: SUPERTONIC_HTTP.ttsConfig,
+        voiceStyleSrc: SUPERTONIC_HTTP.voiceStyle,
       },
     }),
   },
 };
 
-export const DEFAULT_TTS_PROFILE_ID = 'supertonic_en';
+export const DEFAULT_TTS_PROFILE_ID = 'supertonic2';
