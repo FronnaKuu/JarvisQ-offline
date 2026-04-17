@@ -12,7 +12,7 @@ import { NodeSqliteDatabase } from './NodeSqliteDatabase';
 import { NoopHaptics } from './NoopHaptics';
 import { AlwaysGrantedPermissions } from './AlwaysGrantedPermissions';
 import { FetchNetworkInfo } from '@core/net/FetchNetworkInfo';
-import { getAppDataDirectory } from './paths';
+import { getAppDataDirectory, getCacheDirectory } from './paths';
 
 let bootstrapped = false;
 
@@ -20,7 +20,9 @@ export async function bootstrapDesktop(): Promise<void> {
   if (bootstrapped) return;
 
   const baseDirectory = getAppDataDirectory();
+  const cacheDirectory = getCacheDirectory();
   await fsp.mkdir(baseDirectory, { recursive: true });
+  await fsp.mkdir(cacheDirectory, { recursive: true });
 
   const database = await NodeSqliteDatabase.open(baseDirectory);
   registerPlatform({

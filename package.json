@@ -8,7 +8,11 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "prebuild": "npx expo prebuild",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "desktop:bundle-worker": "npx @qvac/cli bundle sdk",
+    "desktop:build": "node scripts/build-desktop.mjs",
+    "desktop:dev": "npm run desktop:build && electron build/desktop/main.mjs",
+    "desktop:dist:win": "npm run desktop:build && electron-builder --win --x64 -c electron-builder.json"
   },
   "dependencies": {
     "@qvac/llm-llamacpp": "^0.12.4",
@@ -61,8 +65,12 @@
   },
   "devDependencies": {
     "@qvac/cli": "^0.2.3",
+    "@types/node": "^22.19.17",
     "@types/react": "~19.1.0",
     "babel-plugin-module-resolver": "^5.0.3",
+    "electron": "^35.7.5",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.2",
     "typescript": "~5.9.2"
   },
   "private": true,

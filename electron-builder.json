@@ -1,0 +1,47 @@
+{
+  "appId": "com.jarvisqvac.desktop",
+  "productName": "JarvisQVAC",
+  "copyright": "© JarvisQVAC",
+  "directories": {
+    "output": "release/desktop/win",
+    "buildResources": "electron/build"
+  },
+  "extraMetadata": {
+    "main": "build/desktop/main.mjs"
+  },
+  "files": [
+    "build/desktop/**/*",
+    "node_modules/@qvac/**/*",
+    "node_modules/bare-*/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "qvac",
+      "to": "qvac",
+      "filter": ["**/*"]
+    }
+  ],
+  "asar": true,
+  "asarUnpack": [
+    "node_modules/@qvac/**/*",
+    "node_modules/bare-*/**/*"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "JarvisQVAC-${version}-${arch}.${ext}",
+    "signAndEditExecutable": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "shortcutName": "JarvisQVAC"
+  },
+  "publish": null
+}

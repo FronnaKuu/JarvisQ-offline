@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; worker-src blob:;"
+    />
+    <title>JarvisQVAC</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <header>
+        <h1>JarvisQVAC</h1>
+        <span id="phase" class="phase" data-phase="IDLE">IDLE</span>
+      </header>
+
+      <section id="bootstrap" class="bootstrap">
+        <button id="btn-bootstrap" type="button">Load models</button>
+        <ul id="bootstrap-list"></ul>
+      </section>
+
+      <section id="transcript" class="transcript" aria-live="polite"></section>
+
+      <footer>
+        <div class="meter"><div id="meter-bar"></div></div>
+        <form id="composer">
+          <input
+            id="input-text"
+            type="text"
+            placeholder="Type a message, or tap Hold to talk"
+            autocomplete="off"
+          />
+          <button id="btn-send" type="submit">Send</button>
+          <button id="btn-voice" type="button">Hold to talk</button>
+          <button id="btn-stop" type="button">Stop</button>
+        </form>
+      </footer>
+    </main>
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>

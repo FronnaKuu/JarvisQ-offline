@@ -162,6 +162,66 @@ Checklist, in order, before blaming cache:
 Only after 1–5 check out should you reach for a full clean
 (`adb uninstall com.anonymous.jarvisqvac` + wipe `android/app/build`).
 
+## Desktop (Windows) build & verify
+
+The desktop target is an Electron shell that hosts `VoicePipeline` in the main
+process and uses the renderer (Chromium) for Web Audio capture + playback.
+The `@qvac/sdk` node RPC client auto-locates the Bare worker at
+`resources/app.asar.unpacked/qvac/worker.entry.mjs` when packaged — the worker
+is the pre-generated `qvac/worker.entry.mjs` checked into the repo.
+
+### First-time setup
+
+```bash
+npm install --legacy-peer-deps
+npm run desktop:bundle-worker   # regenerate qvac/worker.entry.mjs if plugins changed
+```
+
+### Dev loop
+
+```bash
+npm run desktop:dev             # builds build/desktop then launches Electron
+```
+
+The dev script runs `scripts/build-desktop.mjs` (esbuild) and starts Electron
+against `build/desktop/main.mjs`. No Metro / hot-reload — edit then re-run.
+
+### Windows installer
+
+```bash
+npm run desktop:dist:win        # produces release/desktop/win/JarvisQVAC-<v>-x64.exe
+```
+
+`electron-builder.json` emits a per-user NSIS installer. `qvac/**` is copied
+into `resources/qvac/` as `extraResources`, and `node_modules/@qvac/**` and
+`node_modules/bare-*/**` are `asarUnpack`ed so the SDK's Bare worker can load
+its native addons from the filesystem.
+
+### Do NOT on desktop
+
+- Do not import Expo / React Native modules from `electron/**` or anything in
+  the main-process graph. The build script stubs a handful of mobile-only
+  modules (`react-native`, `expo-modules-core`, `modules/device-perf/src`)
+  through an esbuild plugin — expanding that stub list is a smell. Keep
+  platform-specific code in `src/platform/<target>/` and consume it through
+  ports.
+- Do not hardcode the app-data directory. Use
+  `@platform/desktop/paths.ts → getAppDataDirectory() / getCacheDirectory()`.
+- Do not spawn the Bare worker manually. `node-rpc-client` handles discovery,
+  spawning, and RPC — see `QVAC_WORKER_PATH` if you need to override.
+
+### Verifying the installer actually packages the worker
+
+After `desktop:dist:win`, inspect the installer payload:
+
+```bash
+7z l release/desktop/win/JarvisQVAC-*.exe | grep -E "worker.entry|addons.manifest"
+```
+
+Both `qvac/worker.entry.mjs` and `qvac/addons.manifest.json` must appear. If
+either is missing, the SDK will silently fall back to the stock worker and
+miss any custom plugin configured in `qvac.config.json`.
+
 ## Commit style
 
 Conventional Commits. Use `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`.

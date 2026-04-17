@@ -34,3 +34,11 @@ export function getAppDataDirectory(): string {
 export function getDocumentDirectoryWithSep(): string {
   return getAppDataDirectory() + path.sep;
 }
+
+/**
+ * Writable cache directory under the app-data root. Used for transient files
+ * like microphone captures sent to the STT service.
+ */
+export function getCacheDirectory(): string {
+  return path.join(getAppDataDirectory(), 'cache');
+}

@@ -155,19 +155,35 @@ Zustand stores do not need to change.
 
 ### Desktop status (Windows / macOS / Linux)
 
-The desktop adapter set under `src/platform/desktop/` is scaffolded and
-covers three of the five ports using only Node 20+ built-ins (zero native
-dependencies):
+The desktop target is an **Electron shell** under `electron/` that hosts
+`VoicePipeline` in the main process and delegates microphone + PCM playback
+to the renderer over IPC. All eight ports are implemented with zero native
+dependencies:
 
 - `NodeFileSystem` — `node:fs/promises` + `node:https` with range + redirects.
-- `JsonFileKeyValueStore` — atomic JSON-file persistence under the OS
-  app-data directory (`%APPDATA%`, `~/Library/Application Support`,
-  `$XDG_DATA_HOME`).
-- `NodeSqliteDatabase` — `node:sqlite` (stable in Node 22+).
+- `JsonFileKeyValueStore` — atomic JSON persistence under the OS app-data
+  directory (`%APPDATA%`, `~/Library/Application Support`, `$XDG_DATA_HOME`).
+- `NodeSqliteDatabase` — `node:sqlite`.
+- `IpcAudioRecorder` / `IpcAudioPlayer` — main-side proxies.
+- `WebAudioRecorder` / `WebAudioPlayer` — renderer implementation with
+  `getUserMedia`, `AudioWorkletNode`, and dBFS VAD that reuses
+  `AppConfig.vad.*` unchanged.
+- `NoopHaptics`, `AlwaysGrantedPermissions`, `FetchNetworkInfo` — stubs.
 
-Audio (`IAudioRecorder` / `IAudioPlayer`) is deliberately not implemented
-yet — it depends on the shell (Electron, Tauri, Pear, plain Node CLI). See
-`src/platform/desktop/audio/README.md` for the decision matrix.
+The `@qvac/sdk` `node-rpc-client` auto-locates the pre-bundled Bare worker at
+`resources/app.asar.unpacked/qvac/worker.entry.mjs` when packaged, so the
+same STT / LLM / TTS services the mobile app consumes run unchanged on Windows.
+
+**Windows build:**
+
+```bash
+npm run desktop:build            # esbuild → build/desktop/
+npm run desktop:dev              # launch Electron
+npm run desktop:dist:win         # NSIS installer in release/desktop/win/
+```
+
+See [AGENTS.md](AGENTS.md) ("Desktop (Windows) build & verify") and
+`src/platform/desktop/audio/README.md` for details.
 
 ---
 
