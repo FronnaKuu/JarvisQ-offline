@@ -122,11 +122,15 @@ class TtsServiceClass implements ITtsService {
     });
     const int16Samples = await result.buffer;
 
-    // Convert Int16 samples [-32768, 32767] → Float32 [-1.0, 1.0]
-    const float32 = new Float32Array(int16Samples.length);
-    for (let i = 0; i < int16Samples.length; i++) {
-      float32[i] = (int16Samples[i] ?? 0) / 32768;
-    }
+    // Convert Int16 samples [-32768, 32767] → Float32 [-1.0, 1.0].
+    // Hot path: a 10s clause at 44.1 kHz = ~441k iterations on the JS
+    // thread. Avoid `?? 0` (adds a branch per sample; TypedArray indexing
+    // already returns 0 for out-of-range) and hoist `length` out of the
+    // loop so the JIT keeps it in a register.
+    const n = int16Samples.length;
+    const float32 = new Float32Array(n);
+    const inv = 1 / 32768;
+    for (let i = 0; i < n; i++) float32[i] = int16Samples[i]! * inv;
     return float32;
   }
 

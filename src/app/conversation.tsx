@@ -78,10 +78,10 @@ export default function ConversationScreen() {
           assistantMsgIdRef.current = msg.id;
           llmFullTextRef.current = '';
         },
-        onLlmToken: async (token) => {
+        onLlmToken: (token) => {
           if (assistantMsgIdRef.current) {
             llmFullTextRef.current += token;
-            await appendAssistantToken(assistantMsgIdRef.current, token);
+            appendAssistantToken(assistantMsgIdRef.current, token);
           }
         },
         onLlmDone: async () => {

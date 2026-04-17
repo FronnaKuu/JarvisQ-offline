@@ -16,6 +16,14 @@ import {
   makeMessage,
 } from '@data/repositories/MessageRepository';
 
+// Throttle SQL persistence during streaming: an LLM generating 40–60 tok/s
+// would otherwise fire one UPDATE per token over JSI, saturating the JS
+// thread and stalling subsequent token callbacks coming back from
+// llama.cpp. In-memory state is still updated on every token so the UI
+// streams smoothly; the row on disk just catches up in batches. The final
+// text is always persisted by finalizeAssistantMessage().
+const STREAMING_FLUSH_INTERVAL_MS = 400;
+
 interface ConversationStore {
   conversations: Conversation[];
   activeConversationId: string | null;
@@ -33,11 +41,15 @@ interface ConversationStore {
 
   addUserMessage: (text: string) => Promise<Message>;
   addAssistantMessage: () => Promise<Message>;
-  appendAssistantToken: (messageId: string, token: string) => Promise<void>;
+  /** Synchronous so the LLM token callback does not create a microtask
+   *  chain per token. SQL persistence is throttled and fire-and-forget. */
+  appendAssistantToken: (messageId: string, token: string) => void;
   finalizeAssistantMessage: (messageId: string, text: string) => Promise<void>;
 
   activeConversation: () => Conversation | null;
 }
+
+const streamingFlushAt = new Map<string, number>();
 
 export const useConversationStore = create<ConversationStore>((set, get) => ({
   conversations: [],
@@ -105,22 +117,27 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
     return msg;
   },
 
-  appendAssistantToken: async (messageId, token) => {
+  appendAssistantToken: (messageId, token) => {
+    let nextText = '';
     set((s) => {
-      const messages = s.messages.map((m) =>
-        m.id === messageId ? { ...m, text: m.text + token } : m,
-      );
+      const messages = s.messages.map((m) => {
+        if (m.id !== messageId) return m;
+        nextText = m.text + token;
+        return { ...m, text: nextText };
+      });
       return { messages };
     });
-    // Persist asynchronously without blocking UI
-    const { messages } = get();
-    const msg = messages.find((m) => m.id === messageId);
-    if (msg) {
-      void updateMessageText(messageId, msg.text, true);
+
+    const now = Date.now();
+    const lastAt = streamingFlushAt.get(messageId) ?? 0;
+    if (now - lastAt >= STREAMING_FLUSH_INTERVAL_MS) {
+      streamingFlushAt.set(messageId, now);
+      void updateMessageText(messageId, nextText, true);
     }
   },
 
   finalizeAssistantMessage: async (messageId, text) => {
+    streamingFlushAt.delete(messageId);
     await updateMessageText(messageId, text, false);
     set((s) => ({
       messages: s.messages.map((m) =>

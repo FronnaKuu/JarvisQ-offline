@@ -1,6 +1,6 @@
 {
   "name": "jarvisqvac",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -12,7 +12,8 @@
     "desktop:bundle-worker": "npx @qvac/cli bundle sdk",
     "desktop:build": "node scripts/build-desktop.mjs",
     "desktop:dev": "npm run desktop:build && electron build/desktop/main.mjs",
-    "desktop:dist:win": "npm run desktop:build && electron-builder --win --x64 -c electron-builder.json"
+    "desktop:dist:win": "npm run desktop:build && electron-builder --win --x64 -c electron-builder.json",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@qvac/llm-llamacpp": "^0.12.4",
@@ -71,6 +72,7 @@
     "electron": "^35.7.5",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.24.2",
+    "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   },
   "private": true,

@@ -19,6 +19,16 @@ declare global {
   }
 }
 
+function bubbleRecorderError(message: string): void {
+  const transcript = document.getElementById('transcript');
+  if (!transcript) return;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble assistant';
+  bubble.textContent = `\u26A0 Microphone error: ${message}`;
+  transcript.appendChild(bubble);
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
 export function installAudioBridge(): void {
   const api = window.jarvis.audio;
 
@@ -49,7 +59,13 @@ export function installAudioBridge(): void {
         });
       })
       .catch((error) => {
+        // Surface recorder failures to the transcript. Without this, a
+        // denied microphone permission or a missing capture device only
+        // logs to devtools, which a packaged user cannot reach — they
+        // just see the button flash on and go back to IDLE.
+        const msg = error instanceof Error ? error.message : String(error);
         console.error('[audio] recorder failed', error);
+        bubbleRecorderError(msg);
         api.sendRecorderResult({
           requestId: req.requestId,
           samples: null,

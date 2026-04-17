@@ -42,6 +42,21 @@ const composerForm = el<HTMLFormElement>('composer');
 
 installAudioBridge();
 
+// ── Readiness gate ───────────────────────────────────────────────────────
+// The voice button and text send both go through the pipeline, which needs
+// STT + LLM loaded. Disable them until bootstrap completes so the user sees
+// a clear state instead of "STT model not loaded" after every attempt.
+const REQUIRED_READY_KINDS = new Set<'stt' | 'llm' | 'tts'>(['stt', 'llm', 'tts']);
+const readyKinds = new Set<'stt' | 'llm' | 'tts'>();
+
+function setPipelineButtonsEnabled(enabled: boolean): void {
+  btnVoice.disabled = !enabled;
+  btnSend.disabled = !enabled;
+  inputText.disabled = !enabled;
+}
+
+setPipelineButtonsEnabled(false);
+
 // ── Bootstrap UI ──────────────────────────────────────────────────────────
 const bootstrapRows = new Map<string, HTMLLIElement>();
 
@@ -75,6 +90,10 @@ window.jarvis.onBootstrapDone((raw) => {
   if (row) {
     row.dataset.state = 'done';
     (row.querySelector('.value') as HTMLElement).textContent = 'ready';
+  }
+  readyKinds.add(e.kind);
+  if (REQUIRED_READY_KINDS.size === readyKinds.size) {
+    setPipelineButtonsEnabled(true);
   }
 });
 
@@ -161,14 +180,27 @@ composerForm.addEventListener('submit', async (evt) => {
   }
 });
 
-// Click-to-start voice turn. VAD silence auto-stops the recording; the Stop
-// button interrupts on demand (barge-in + teardown).
+// Tap-to-toggle voice turn. A first tap starts listening; VAD auto-stops
+// when the user falls silent, but a second tap short-circuits that so the
+// user isn't stuck waiting for the silence timeout. The `active` class is
+// *not* toggled here — the pipeline phase (`onPhase` above) is the source
+// of truth so the button always reflects what the backend is actually
+// doing, even if startVoice() rejects mid-flight.
+let voiceActivePhase: PhaseEvent['phase'] = 'IDLE';
+
+window.jarvis.onPhase((raw) => {
+  voiceActivePhase = (raw as PhaseEvent).phase;
+});
+
 btnVoice.addEventListener('click', async () => {
-  btnVoice.classList.add('active');
+  if (voiceActivePhase === 'LISTENING') {
+    await window.jarvis.stopPipeline();
+    return;
+  }
   try {
     await window.jarvis.startVoice();
-  } finally {
-    btnVoice.classList.remove('active');
+  } catch (err) {
+    appendBubble('assistant', `Voice start failed: ${(err as Error).message}`);
   }
 });
 

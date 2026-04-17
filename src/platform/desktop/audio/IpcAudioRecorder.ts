@@ -7,8 +7,12 @@
 //      matching `recorder:result` event (renderer forwards `onAmplitude` and
 //      `onStateChange` in the meantime).
 //   2. On result, the Float32 PCM buffer is WAV-encoded and written under the
-//      desktop cache directory. The resulting `file://` URI is returned so
-//      `SttService.transcribe` can ingest it unchanged.
+//      desktop cache directory. The absolute native path is returned — the
+//      `RecordingResult.uri` contract accepts a path or URI, and the Bare
+//      worker behind the SDK consumes a native path directly. Emitting a
+//      `file://` URI here would force the core STT layer to reverse the
+//      conversion and handle Windows drive-letter quirks, which is a
+//      platform concern that belongs in this adapter.
 //   3. `abort()` emits `recorder:abort` and ignores the pending reply.
 //
 // The class is framework-agnostic — it talks through two small IPC primitives
@@ -17,7 +21,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import * as crypto from 'node:crypto';
-import { pathToFileURL } from 'node:url';
 import type {
   AudioRecorderCallbacks,
   AudioRecorderState,
@@ -118,7 +121,7 @@ export class IpcAudioRecorder implements IAudioRecorder {
     const absPath = path.join(this.cacheDirectory, filename);
     await fs.writeFile(absPath, wav);
 
-    return { uri: pathToFileURL(absPath).toString(), durationMs: payload.durationMs };
+    return { uri: absPath, durationMs: payload.durationMs };
   }
 
   async abort(): Promise<void> {

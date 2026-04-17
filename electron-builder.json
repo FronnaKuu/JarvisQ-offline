@@ -13,20 +13,10 @@
     "build/desktop/**/*",
     "node_modules/@qvac/**/*",
     "node_modules/bare-*/**/*",
+    "qvac/**/*",
     "package.json"
   ],
-  "extraResources": [
-    {
-      "from": "qvac",
-      "to": "qvac",
-      "filter": ["**/*"]
-    }
-  ],
-  "asar": true,
-  "asarUnpack": [
-    "node_modules/@qvac/**/*",
-    "node_modules/bare-*/**/*"
-  ],
+  "asar": false,
   "win": {
     "target": [
       {

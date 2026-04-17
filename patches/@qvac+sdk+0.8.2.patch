@@ -1,0 +1,14 @@
+diff --git a/node_modules/@qvac/sdk/dist/client/rpc/node-rpc-client.js b/node_modules/@qvac/sdk/dist/client/rpc/node-rpc-client.js
+index fec818b..3275c9b 100644
+--- a/node_modules/@qvac/sdk/dist/client/rpc/node-rpc-client.js
++++ b/node_modules/@qvac/sdk/dist/client/rpc/node-rpc-client.js
+@@ -189,7 +189,8 @@ async function ensureRPC() {
+                         HOME_DIR: os.homedir(),
+                     }),
+                 ],
+-                stdio: ["inherit", "inherit", "inherit"],
++                stdio: ["ignore", "inherit", "inherit"],
++                windowsHide: true,
+             });
+         });
+     });

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; worker-src blob:;"
+      content="default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; worker-src blob:;"
     />
     <title>JarvisQVAC</title>
     <link rel="stylesheet" href="styles.css" />
@@ -29,11 +29,11 @@
           <input
             id="input-text"
             type="text"
-            placeholder="Type a message, or tap Hold to talk"
+            placeholder="Type a message, or tap the mic to talk"
             autocomplete="off"
           />
           <button id="btn-send" type="submit">Send</button>
-          <button id="btn-voice" type="button">Hold to talk</button>
+          <button id="btn-voice" type="button">Tap to talk</button>
           <button id="btn-stop" type="button">Stop</button>
         </form>
       </footer>
