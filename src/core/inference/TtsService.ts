@@ -18,7 +18,7 @@ export interface TtsLoadConfig {
   unicodeIndexerSrc: string;
   ttsConfigSrc: string;
   voiceStyleSrc: string;
-  language: 'en' | 'de' | 'es' | 'it';
+  language: 'en' | 'ko' | 'es' | 'pt' | 'fr';
   speed: number;
   sampleRate: number;
   useGpu: boolean;

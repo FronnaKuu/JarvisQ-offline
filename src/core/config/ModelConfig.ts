@@ -276,12 +276,12 @@ export interface TtsProfile {
   buildLoadConfig: (
     useGpu: boolean,
     speed: number,
-    language: 'en' | 'de' | 'es' | 'it',
+    language: 'en' | 'ko' | 'es' | 'pt' | 'fr',
   ) => TtsLoadConfig;
   buildHttpFallbackConfig?: (
     useGpu: boolean,
     speed: number,
-    language: 'en' | 'de' | 'es' | 'it',
+    language: 'en' | 'ko' | 'es' | 'pt' | 'fr',
   ) => TtsLoadConfig;
 }
 
