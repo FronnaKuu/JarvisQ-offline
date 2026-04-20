@@ -79,14 +79,12 @@ export class AppBootstrap {
       await LlmService.load(
         llmProfile.buildLoadConfig(
           settings.useGpu,
-          settings.llmSystemPrompt,
           settings.llmTemperature,
           settings.llmMaxTokens,
         ),
         (p) => handlers.onServiceProgress?.('llm', toSnapshot(p)),
         llmProfile.buildHttpFallbackConfig?.(
           settings.useGpu,
-          settings.llmSystemPrompt,
           settings.llmTemperature,
           settings.llmMaxTokens,
         ),

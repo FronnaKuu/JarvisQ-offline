@@ -212,13 +212,11 @@ export interface LlmProfile {
   estimatedBytes: number;
   buildLoadConfig: (
     useGpu: boolean,
-    systemPrompt: string,
     temperature: number,
     maxTokens: number,
   ) => LlmLoadConfig;
   buildHttpFallbackConfig?: (
     useGpu: boolean,
-    systemPrompt: string,
     temperature: number,
     maxTokens: number,
   ) => LlmLoadConfig;
@@ -229,21 +227,19 @@ export const LLM_PROFILES: Record<string, LlmProfile> = {
     id: 'qwen3_1_7b',
     label: 'Qwen3 1.7B Q4 (~1.1 GB)',
     estimatedBytes: 1_100_000_000,
-    buildLoadConfig: (useGpu, systemPrompt, temperature, maxTokens) => ({
+    buildLoadConfig: (useGpu, temperature, maxTokens) => ({
       modelConstant: QWEN3_1_7B_INST_Q4,
       contextSize: AppConfig.llm.contextSize,
       temperature,
       maxTokens,
-      systemPrompt,
       useGpu,
       noThink: true,
     }),
-    buildHttpFallbackConfig: (useGpu, systemPrompt, temperature, maxTokens) => ({
+    buildHttpFallbackConfig: (useGpu, temperature, maxTokens) => ({
       modelConstant: { src: QWEN3_HTTP.q4, modelId: 'Qwen3-1.7B-Q4_0.gguf' },
       contextSize: AppConfig.llm.contextSize,
       temperature,
       maxTokens,
-      systemPrompt,
       useGpu,
       noThink: true,
     }),
@@ -252,12 +248,11 @@ export const LLM_PROFILES: Record<string, LlmProfile> = {
     id: 'qwen3_4b',
     label: 'Qwen3 4B Q4 (~2.5 GB)',
     estimatedBytes: 2_500_000_000,
-    buildLoadConfig: (useGpu, systemPrompt, temperature, maxTokens) => ({
+    buildLoadConfig: (useGpu, temperature, maxTokens) => ({
       modelConstant: QWEN3_4B_INST_Q4_K_M,
       contextSize: AppConfig.llm.contextSize,
       temperature,
       maxTokens,
-      systemPrompt,
       useGpu,
       noThink: true,
     }),

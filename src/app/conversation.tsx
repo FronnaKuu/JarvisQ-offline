@@ -115,6 +115,35 @@ export default function ConversationScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Propagate live setting / active-conversation overrides to the long-lived pipeline.
+  // Without this the pipeline captures config at mount time, so edits to system
+  // prompt / generation params in Settings never reach the next LLM turn.
+  useEffect(() => {
+    pipelineRef.current?.updateConfig({
+      systemPrompt: activeConversation?.systemPrompt ?? settings.llmSystemPrompt,
+      maxTokens: activeConversation?.maxResponseTokens ?? settings.llmMaxTokens,
+      temperature: activeConversation?.temperature ?? settings.llmTemperature,
+      ttsBufferMode: settings.ttsBufferMode,
+      ttsOptions: {
+        speed: activeConversation?.ttsSpeed ?? settings.ttsSpeed,
+        pitch: settings.ttsPitch,
+        language: settings.ttsSystemLanguage,
+      },
+    });
+  }, [
+    activeConversation?.systemPrompt,
+    activeConversation?.maxResponseTokens,
+    activeConversation?.temperature,
+    activeConversation?.ttsSpeed,
+    settings.llmSystemPrompt,
+    settings.llmMaxTokens,
+    settings.llmTemperature,
+    settings.ttsBufferMode,
+    settings.ttsSpeed,
+    settings.ttsPitch,
+    settings.ttsSystemLanguage,
+  ]);
+
   const handleVoicePress = useCallback(() => {
     const p = pipelineRef.current;
     if (!p) return;

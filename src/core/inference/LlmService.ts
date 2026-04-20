@@ -13,7 +13,6 @@ export interface LlmLoadConfig {
   contextSize: number;
   temperature: number;
   maxTokens: number;
-  systemPrompt: string;
   useGpu: boolean;
   /** Append /no_think to user messages (Qwen3 and compatible reasoning models). */
   noThink?: boolean;
@@ -135,7 +134,6 @@ function buildLoadModelArgs(config: LlmLoadConfig): LoadModelArgs {
       temp: config.temperature,
       predict: config.maxTokens,
       device: config.useGpu ? 'gpu' : 'cpu',
-      system_prompt: config.systemPrompt || undefined,
     },
   };
 }

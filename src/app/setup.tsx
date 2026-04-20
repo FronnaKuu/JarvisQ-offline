@@ -82,7 +82,6 @@ export default function SetupScreen() {
       await LlmService.load(
         llmProfile.buildLoadConfig(
           settings.useGpu,
-          settings.llmSystemPrompt,
           settings.llmTemperature,
           settings.llmMaxTokens,
         ),
@@ -93,7 +92,6 @@ export default function SetupScreen() {
         },
         llmProfile.buildHttpFallbackConfig?.(
           settings.useGpu,
-          settings.llmSystemPrompt,
           settings.llmTemperature,
           settings.llmMaxTokens,
         ),
