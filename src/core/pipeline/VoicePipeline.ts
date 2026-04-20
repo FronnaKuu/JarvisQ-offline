@@ -61,7 +61,13 @@ export class VoicePipeline {
   private ttsAborted = false;
   private isDraining = false;
   private muteTts = false;
-  private autoLoop = true;
+  // Push-to-talk by default: the mic does NOT re-open automatically after the
+  // assistant finishes speaking. Hands-free chaining caused the microphone to
+  // capture the tail of the device's own TTS output (no hardware AEC on most
+  // Android phones with expo-av's MIC audio source), producing self-triggered
+  // turns ("responds to itself"). Users re-arm listening explicitly via the
+  // mic button, which is the standard on-device voice-assistant UX.
+  private autoLoop = false;
   private history: ConversationMessage[] = [];
 
   private readonly recorder: IAudioRecorder;
@@ -95,13 +101,12 @@ export class VoicePipeline {
   }
 
   /**
-   * Silent mode: skip TTS synthesis and disable the auto-restart of the STT
-   * listen loop. Used by text/chat mode so the microphone is not reopened and
-   * the assistant reply is shown as text only.
+   * Silent mode: skip TTS synthesis. Used by text/chat mode so the assistant
+   * reply is shown as text only. The listen loop is push-to-talk in both
+   * modes (see `autoLoop`), so this no longer toggles microphone re-arming.
    */
   setSilentMode(silent: boolean): void {
     this.muteTts = silent;
-    this.autoLoop = !silent;
   }
 
   // ---- Public control ----------------------------------------------------
