@@ -98,7 +98,11 @@ export default function ConversationScreen() {
         },
       },
       {
-        systemPrompt: activeConversation?.systemPrompt ?? settings.llmSystemPrompt,
+        // Settings is the single source of truth for the system prompt — the
+        // per-conversation field in the DB is currently unused (no UI to edit
+        // it) and was shadowing every global edit because ?? only falls
+        // through on null/undefined, not on the baked-in default string.
+        systemPrompt: settings.llmSystemPrompt,
         maxTokens: activeConversation?.maxResponseTokens ?? settings.llmMaxTokens,
         temperature: activeConversation?.temperature ?? settings.llmTemperature,
         ttsBufferMode: settings.ttsBufferMode,
@@ -120,7 +124,7 @@ export default function ConversationScreen() {
   // prompt / generation params in Settings never reach the next LLM turn.
   useEffect(() => {
     pipelineRef.current?.updateConfig({
-      systemPrompt: activeConversation?.systemPrompt ?? settings.llmSystemPrompt,
+      systemPrompt: settings.llmSystemPrompt,
       maxTokens: activeConversation?.maxResponseTokens ?? settings.llmMaxTokens,
       temperature: activeConversation?.temperature ?? settings.llmTemperature,
       ttsBufferMode: settings.ttsBufferMode,
@@ -131,7 +135,6 @@ export default function ConversationScreen() {
       },
     });
   }, [
-    activeConversation?.systemPrompt,
     activeConversation?.maxResponseTokens,
     activeConversation?.temperature,
     activeConversation?.ttsSpeed,
