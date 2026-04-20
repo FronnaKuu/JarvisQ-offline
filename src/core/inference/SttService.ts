@@ -2,11 +2,11 @@
 // Wraps @qvac/sdk transcription — supports both Whisper and Parakeet engines.
 //
 // Accepts a recording URI (file://... from expo-av). The URI is converted to
-// an absolute path and passed as a filePath to transcribeStream(). The SDK
+// an absolute path and passed as a filePath to transcribe(). The SDK
 // server-side handler detects the format via the file extension and uses
 // FFmpegDecoder to convert it to f32le PCM. Works for Whisper and Parakeet.
 
-import { loadModel, transcribeStream, unloadModel } from '@qvac/sdk';
+import { loadModel, transcribe, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 import { loadModelWithFallback } from '@core/utils/loadWithFallback';
 import type { LoadModelArgs } from '@core/utils/loadWithFallback';
@@ -80,11 +80,17 @@ class SttServiceClass implements ISttService {
 
   /**
    * Transcribes a recorded audio file identified by its URI.
-   * The URI (e.g. file:///data/…/recording.wav) is stripped to an absolute
-   * path and passed as a filePath to transcribeStream(). The SDK server
-   * decodes it via FFmpegDecoder (handles WAV, 3GPP, AAC, M4A, etc.).
-   * Yields partial text progressively via onPartial as Whisper processes.
+   * The URI (e.g. file:///data/…/recording.m4a) is stripped to an absolute
+   * path and passed as a filePath to transcribe(). The SDK server decodes it
+   * via FFmpegDecoder (handles WAV, 3GPP, AAC, M4A, etc.).
    * Returns the final trimmed text, or '' if no speech was detected.
+   *
+   * NOTE: transcribe() returns the complete text in one shot. onPartial is
+   * called once with the final result for API compatibility with the caller,
+   * which previously relied on streaming partials from transcribeStream. If
+   * partial updates become necessary again, migrate to the bidirectional
+   * session-based transcribeStream overload — but that one is Whisper-only
+   * in @qvac/sdk 0.9 and would not work with Parakeet.
    */
   async transcribeFile(
     uri: string,
@@ -95,17 +101,14 @@ class SttServiceClass implements ISttService {
     // Strip file:// scheme and decode URI encoding → absolute path for bare-fs
     const filePath = decodeURIComponent(uri.replace(/^file:\/\//, ''));
 
-    let fullText = '';
-    for await (const chunk of transcribeStream({
+    const raw = await transcribe({
       modelId: this.modelId,
       audioChunk: filePath,
-    })) {
-      if (!chunk.includes(BLANK_AUDIO_MARKER)) {
-        fullText += chunk;
-        onPartial(fullText.trim());
-      }
-    }
-    return fullText.trim();
+    });
+
+    const text = raw.includes(BLANK_AUDIO_MARKER) ? '' : raw.trim();
+    if (text) onPartial(text);
+    return text;
   }
 
   async unload(): Promise<void> {
