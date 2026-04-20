@@ -5,33 +5,19 @@
 // so returning users never see a "Download & Setup" button when the cache is
 // already warm.
 
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, Text } from 'react-native-paper';
+import { Button, ProgressBar, Text } from 'react-native-paper';
 import { useRouter } from 'expo-router';
-import { DownloadProgressItem } from '@ui/components/DownloadProgress';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { useConversationStore } from '@domain/ConversationStore';
 import { getPlatform } from '@core/platform/PlatformContainer';
 import { AppTheme } from '@ui/theme/theme';
 import type { ServiceKind } from '@core/bootstrap/AppBootstrap';
-import type { DownloadProgress } from '@domain/types';
 
 const SERVICE_ORDER: ServiceKind[] = ['stt', 'llm', 'tts'];
-
-function toDownloadProgress(
-  service: { progress: { bytesDownloaded: number; totalBytes: number; percentage: number } | null; label: string },
-): DownloadProgress | null {
-  if (!service.progress) return null;
-  return {
-    bytesDownloaded: service.progress.bytesDownloaded,
-    totalBytes: service.progress.totalBytes,
-    percentage: service.progress.percentage,
-    currentFile: service.label,
-  };
-}
 
 export default function Index() {
   const router = useRouter();
@@ -65,37 +51,94 @@ export default function Index() {
     }
   }, [phase, router]);
 
+  const { overallPercent, hasProgress } = useMemo(() => {
+    let sum = 0;
+    let anyProgress = false;
+    for (const kind of SERVICE_ORDER) {
+      const s = services[kind];
+      if (s.phase === 'done') {
+        sum += 100;
+      } else if (s.progress) {
+        sum += s.progress.percentage;
+        anyProgress = true;
+      }
+    }
+    return {
+      overallPercent: sum / SERVICE_ORDER.length,
+      hasProgress: anyProgress,
+    };
+  }, [services]);
+
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 1100,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 1100,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
   if (!settingsLoaded || !conversationsLoaded || phase === 'idle') {
     return <SafeAreaView style={styles.safe} />;
   }
 
+  const pulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
+  const pulseOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] });
+
+  const statusLabel =
+    phase === 'error'
+      ? 'Something went wrong'
+      : isOffline
+        ? 'Offline — loading cached models'
+        : 'Preparing on-device models';
+
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.content}>
-        <Text variant="displaySmall" style={styles.title}>
-          JarvisQVAC
-        </Text>
-        <Text variant="bodyMedium" style={styles.subtitle}>
-          {isOffline ? 'Offline — loading cached models' : 'Preparing on-device models'}
-        </Text>
+        <Animated.View
+          style={[
+            styles.badge,
+            { opacity: pulseOpacity, transform: [{ scale: pulseScale }] },
+          ]}
+        >
+          <Text variant="displaySmall" style={styles.badgeText}>
+            J
+          </Text>
+        </Animated.View>
 
-        <View style={styles.section}>
-          {SERVICE_ORDER.map((kind) => {
-            const service = services[kind];
-            return (
-              <DownloadProgressItem
-                key={kind}
-                label={service.label || kind.toUpperCase()}
-                progress={toDownloadProgress(service)}
-                isDone={service.phase === 'done'}
-                phase={service.phase}
-              />
-            );
-          })}
+        <View style={styles.titleBlock}>
+          <Text variant="headlineSmall" style={styles.title}>
+            JarvisQVAC
+          </Text>
+          <Text variant="bodyMedium" style={styles.subtitle}>
+            {statusLabel}
+          </Text>
         </View>
 
+        {phase !== 'error' ? (
+          <ProgressBar
+            indeterminate={!hasProgress}
+            progress={hasProgress ? overallPercent / 100 : 0}
+            style={styles.bar}
+            color={AppTheme.colors.primary}
+          />
+        ) : null}
+
         {phase === 'error' && errorMessage ? (
-          <>
+          <View style={styles.errorBlock}>
             <Text variant="bodySmall" style={styles.errorText}>
               {errorMessage}
             </Text>
@@ -107,7 +150,7 @@ export default function Index() {
             >
               Retry
             </Button>
-          </>
+          </View>
         ) : null}
       </View>
     </SafeAreaView>
@@ -118,26 +161,49 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: AppTheme.colors.background },
   content: {
     flex: 1,
-    paddingHorizontal: AppTheme.spacing.xl,
+    paddingHorizontal: AppTheme.spacing.xxl,
     justifyContent: 'center',
+    alignItems: 'center',
     gap: AppTheme.spacing.xl,
+  },
+  badge: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: AppTheme.colors.primaryContainer,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: {
+    color: AppTheme.colors.onPrimaryContainer,
+    fontWeight: '700',
+  },
+  titleBlock: {
+    alignItems: 'center',
+    gap: AppTheme.spacing.xs,
   },
   title: {
     color: AppTheme.colors.onBackground,
     fontWeight: '700',
     textAlign: 'center',
+    letterSpacing: 0.5,
   },
-  section: {
-    gap: AppTheme.spacing.md,
-  },
-  errorText: { color: AppTheme.colors.error, textAlign: 'center' },
   subtitle: {
     color: AppTheme.colors.outline,
     textAlign: 'center',
-    marginTop: -AppTheme.spacing.md,
   },
+  bar: {
+    height: 3,
+    width: '60%',
+    borderRadius: AppTheme.radius.sm,
+    backgroundColor: AppTheme.colors.surfaceVariant,
+  },
+  errorBlock: {
+    width: '100%',
+    gap: AppTheme.spacing.md,
+  },
+  errorText: { color: AppTheme.colors.error, textAlign: 'center' },
   button: {
-    marginTop: AppTheme.spacing.lg,
     borderRadius: AppTheme.radius.lg,
   },
   buttonContent: { paddingVertical: AppTheme.spacing.sm },

@@ -10,7 +10,6 @@ import {
   Appbar,
   Button,
   Dialog,
-  Divider,
   IconButton,
   Portal,
   Text,
@@ -72,7 +71,6 @@ export default function ConversationsListScreen() {
         data={conversations}
         keyExtractor={(c) => c.id}
         contentContainerStyle={styles.listContent}
-        ItemSeparatorComponent={() => <Divider style={styles.separator} />}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text variant="bodyMedium" style={styles.emptyText}>
@@ -99,9 +97,10 @@ export default function ConversationsListScreen() {
               </Text>
             </View>
             <IconButton
-              icon="pencil"
-              size={18}
+              icon="pencil-outline"
+              size={20}
               iconColor={AppTheme.colors.onSurfaceVariant}
+              style={styles.itemAction}
               accessibilityLabel="Rename conversation"
               onPress={() => {
                 setRenameTarget(item);
@@ -110,8 +109,9 @@ export default function ConversationsListScreen() {
             />
             <IconButton
               icon="delete-outline"
-              size={18}
+              size={20}
               iconColor={AppTheme.colors.error}
+              style={styles.itemAction}
               accessibilityLabel="Delete conversation"
               onPress={() => void deleteConversation(item.id)}
             />
@@ -157,28 +157,35 @@ const styles = StyleSheet.create({
     fontWeight: AppTheme.typography.titleMedium.fontWeight,
   },
   listContent: {
-    paddingVertical: AppTheme.spacing.xs,
-  },
-  separator: {
-    backgroundColor: AppTheme.colors.surfaceVariant,
-    marginHorizontal: AppTheme.spacing.lg,
-    height: StyleSheet.hairlineWidth,
+    paddingHorizontal: AppTheme.spacing.md,
+    paddingVertical: AppTheme.spacing.sm,
+    gap: AppTheme.spacing.sm,
   },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: AppTheme.spacing.lg,
-    paddingVertical: AppTheme.spacing.xs,
+    gap: AppTheme.spacing.xs,
+    paddingLeft: AppTheme.spacing.lg,
+    paddingRight: AppTheme.spacing.xs,
+    paddingVertical: AppTheme.spacing.sm,
+    backgroundColor: AppTheme.colors.surface,
+    borderRadius: AppTheme.radius.lg,
   },
   itemText: {
     flex: 1,
     minWidth: 0,
+    gap: AppTheme.spacing.xxs,
+    paddingVertical: AppTheme.spacing.xs,
   },
   itemTitle: {
     color: AppTheme.colors.onBackground,
+    fontWeight: '600',
   },
   itemDescription: {
     color: AppTheme.colors.outline,
+  },
+  itemAction: {
+    margin: 0,
   },
   empty: {
     padding: AppTheme.spacing.xl,

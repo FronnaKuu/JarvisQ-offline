@@ -43,8 +43,8 @@ export default function RootLayout() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="setup" options={{ title: 'Setup', headerShown: false }} />
         <Stack.Screen name="conversation" options={{ title: 'Conversation', headerShown: false }} />
-        <Stack.Screen name="conversations" options={{ title: 'Conversations' }} />
-        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+        <Stack.Screen name="conversations" options={{ title: 'Conversations', headerShown: false }} />
+        <Stack.Screen name="settings" options={{ title: 'Settings', headerShown: false }} />
       </Stack>
     </PaperProvider>
     </SafeAreaProvider>
