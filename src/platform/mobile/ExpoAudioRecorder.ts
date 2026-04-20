@@ -1,13 +1,22 @@
 // ---- Expo Audio Recorder (Mobile) ----------------------------------------
 // Implements IAudioRecorder using expo-av for iOS and Android.
 //
+// Audio format:
+//   - Android: MPEG-4 container + AAC encoder at 16 kHz mono. The previous
+//     DEFAULT/DEFAULT combo let MediaRecorder pick AMR-NB at 8 kHz, which
+//     destroys half the spectrum before the STT model ever sees it. AAC 16 kHz
+//     is loss-tolerant but preserves the voice band the STT was trained on.
+//   - iOS: 16-bit linear PCM WAV at 16 kHz mono (already correct).
+// Both formats are decoded to f32le PCM server-side by the @qvac/sdk
+// FFmpegDecoder before reaching the model.
+//
 // Strategy (expo-av has no raw PCM frame callback):
 //   1. Enable metering to get dBFS amplitude every ~100ms via status updates
 //   2. Detect speech start  -> amplitude > speechThresholdDb
 //   3. Detect speech end    -> amplitude < silenceThresholdDb for silenceDurationMs
 //   4. Auto-stop recording on end-of-speech or hard timeout
 //   5. Return the recording URI -- the @qvac/sdk server-side decoder handles
-//      format conversion (WAV, 3GPP, AAC -> f32le PCM) via FFmpegDecoder.
+//      format conversion (WAV, M4A, AAC -> f32le PCM) via FFmpegDecoder.
 //
 // NOTE: On Android, expo-av metering may return null (no hardware support).
 // When that happens, amplitude VAD is disabled and the hard timeout fires.
@@ -66,12 +75,12 @@ export class ExpoAudioRecorder implements IAudioRecorder {
 
     await this.recording.prepareToRecordAsync({
       android: {
-        extension: '.wav',
-        outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-        audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
+        extension: '.m4a',
+        outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+        audioEncoder: Audio.AndroidAudioEncoder.AAC,
         sampleRate: SAMPLE_RATE,
         numberOfChannels: 1,
-        bitRate: 256000,
+        bitRate: 128000,
       },
       ios: {
         extension: '.wav',
