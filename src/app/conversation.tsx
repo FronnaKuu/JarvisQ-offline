@@ -55,6 +55,10 @@ export default function ConversationScreen() {
   const [atBottom, setAtBottom] = useState(true);
   const [menuVisible, setMenuVisible] = useState(false);
   const [controlsHeight, setControlsHeight] = useState(0);
+  // Session-level mic gate. When muted, the voice button is a no-op and any
+  // in-flight listen is aborted. Deliberately not persisted to settings — this
+  // is an immediate-action control, not a preference.
+  const [micMuted, setMicMuted] = useState(false);
   const listRef = useRef<FlatList<Message>>(null);
   const assistantMsgIdRef = useRef<string | null>(null);
   const pipelineRef = useRef<VoicePipeline | null>(null);
@@ -183,10 +187,23 @@ export default function ConversationScreen() {
   const handleVoicePress = useCallback(() => {
     const p = pipelineRef.current;
     if (!p) return;
+    if (micMuted && phase === 'IDLE') return;
     if (phase === 'LISTENING') void p.stopListening();
     else if (phase === 'IDLE') void p.startListening();
     else if (phase === 'SPEAKING') void p.interrupt();
-  }, [phase]);
+  }, [phase, micMuted]);
+
+  const handleMicToggle = useCallback(() => {
+    setMicMuted((prev) => {
+      const next = !prev;
+      if (next) {
+        // Muting: kill any in-flight listen immediately so the mic indicator
+        // and LED turn off right away, even if VAD was mid-recording.
+        void pipelineRef.current?.stopListening();
+      }
+      return next;
+    });
+  }, []);
 
   const handleRetry = useCallback(() => {
     setPipelineError(null);
@@ -358,7 +375,20 @@ export default function ConversationScreen() {
           ]}
         >
           {inputMode === 'voice' ? (
-            <VoiceButton phase={phase} amplitude={amplitude} onPress={handleVoicePress} />
+            <View style={styles.voiceRow}>
+              <IconButton
+                icon={micMuted ? 'microphone-off' : 'microphone'}
+                mode="contained-tonal"
+                size={24}
+                onPress={handleMicToggle}
+                accessibilityLabel={micMuted ? 'Unmute microphone' : 'Mute microphone'}
+                accessibilityState={{ selected: micMuted }}
+                style={styles.micToggle}
+              />
+              <VoiceButton phase={phase} amplitude={amplitude} onPress={handleVoicePress} />
+              {/* Spacer to keep the VoiceButton centered even with the toggle on the left. */}
+              <View style={styles.micToggleSpacer} pointerEvents="none" />
+            </View>
           ) : (
             <TextComposer
               disabled={phase !== 'IDLE'}
@@ -433,5 +463,17 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: AppTheme.colors.surfaceVariant,
     backgroundColor: AppTheme.colors.background,
+  },
+  voiceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: AppTheme.spacing.lg,
+  },
+  micToggle: {
+    marginBottom: 0,
+  },
+  micToggleSpacer: {
+    width: 40,
   },
 });
