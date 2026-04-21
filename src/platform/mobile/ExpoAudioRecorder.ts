@@ -77,10 +77,10 @@ export class ExpoAudioRecorder implements IAudioRecorder {
     if (this.state !== 'idle') return null;
 
     await Audio.requestPermissionsAsync();
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
-    });
+    // Audio mode is set once at bootstrap (bootstrapMobile) with
+    // allowsRecordingIOS=true. Not flipping it per record() call avoids
+    // Android audio-focus churn (setMode / setSpeakerphoneOn in logs) that
+    // correlates with first-word cuts on the following TTS clause.
 
     this.recording = new Audio.Recording();
     this.speechDetected = false;

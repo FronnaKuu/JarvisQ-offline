@@ -14,10 +14,12 @@ export const AppConfig = {
     // Set to 1500ms: Android speakers can ring/echo for up to ~1s after playback
     // stops, and the expo-av AudioTrack teardown itself takes ~100–200ms.
     postSpeakingDelayMs: 1500,
-    // Extra-conservative delay when hands-free auto-loop is on — expo-av's
-    // MIC audio source has no hardware AEC, so we give the speaker output
-    // more time to decay before re-arming the microphone.
-    handsFreePostSpeakingDelayMs: 2500,
+    // Delay before re-arming the microphone in hands-free auto-loop.
+    // expo-av's MIC source has no hardware AEC, so we wait for the speaker
+    // tail to decay. Kept tight (1200ms) because onSpeakingDone now fires
+    // only after playback truly ends — the old 2500ms was needed to cover a
+    // race where the timer started while TTS was still playing.
+    handsFreePostSpeakingDelayMs: 1200,
   },
 
   // Audio capture parameters (platform recorders read these — no hardcoded

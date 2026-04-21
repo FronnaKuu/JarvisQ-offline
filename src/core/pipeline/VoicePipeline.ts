@@ -69,6 +69,7 @@ export class VoicePipeline {
   private isCancelled = false;
   private ttsAborted = false;
   private isDraining = false;
+  private speakingDoneFired = false;
   private muteTts = false;
   // Push-to-talk by default. Hands-free chaining reopens the microphone
   // shortly after TTS ends; on devices without hardware AEC (most Android
@@ -177,6 +178,16 @@ export class VoicePipeline {
     if (this.isCancelled) return;
 
     if (!result) {
+      // Hands-free: if no speech was captured in the listen window, re-arm
+      // the recorder so the user can speak whenever they like. The VAD gate
+      // inside the recorder prevents ambient noise from falsely triggering
+      // a turn. Push-to-talk mode still returns to IDLE and waits for a tap.
+      if (this.autoLoop) {
+        setTimeout(() => {
+          if (!this.isCancelled) void this.listen();
+        }, 0);
+        return;
+      }
       this.setPhase('IDLE');
       return;
     }
@@ -202,7 +213,22 @@ export class VoicePipeline {
       return;
     }
 
-    if (this.isCancelled || !finalText) {
+    if (this.isCancelled) {
+      this.setPhase('IDLE');
+      return;
+    }
+
+    if (!finalText) {
+      // Empty transcription (silence, [BLANK_AUDIO], or unintelligible). In
+      // hands-free this must not drop back to IDLE — otherwise the user has
+      // to tap again to resume. Re-arm the recorder; VAD keeps idle cycles
+      // cheap.
+      if (this.autoLoop) {
+        setTimeout(() => {
+          if (!this.isCancelled) void this.listen();
+        }, 0);
+        return;
+      }
       this.setPhase('IDLE');
       return;
     }
@@ -218,6 +244,7 @@ export class VoicePipeline {
 
     this.audioPlayer.reset();
     this.isDraining = false;
+    this.speakingDoneFired = false;
 
     let fullResponse = '';
     let responderDone = false;
@@ -281,7 +308,15 @@ export class VoicePipeline {
       return;
     }
 
-    if (clauses.length === 0 && !this.isCancelled) {
+    // Only fire onSpeakingDone here when nothing ever started draining.
+    // If a drain is in flight (e.g. awaiting playback of the final clause
+    // already shifted off the queue), the onQueueEmpty callback will fire
+    // onSpeakingDone once playback finishes.
+    if (
+      clauses.length === 0 &&
+      !this.isDraining &&
+      !this.isCancelled
+    ) {
       this.onSpeakingDone(userText, fullResponse);
     }
   }
@@ -325,6 +360,9 @@ export class VoicePipeline {
   // ---- Loop back ---------------------------------------------------------
 
   private onSpeakingDone(userText: string, assistantText: string): void {
+    if (this.speakingDoneFired) return;
+    this.speakingDoneFired = true;
+
     if (this.isCancelled) {
       this.setPhase('IDLE');
       return;

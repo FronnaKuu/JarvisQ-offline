@@ -13,6 +13,9 @@ import * as FileSystem from 'expo-file-system/legacy';
 import type { IAudioPlayer } from '@core/ports/IAudioPlayer';
 
 const TEMP_PREFIX = 'tts_';
+// Android ExoPlayer drops a handful of samples during start-up; prepending a
+// short silent lead-in ensures the actual first phoneme is not clipped.
+const LEAD_IN_MS = 80;
 
 export class ExpoAudioPlayer implements IAudioPlayer {
   private chunks: Float32Array[] = [];
@@ -32,7 +35,10 @@ export class ExpoAudioPlayer implements IAudioPlayer {
     const merged = this.mergeChunks();
     this.chunks = [];
 
-    const wav = encodeWav(merged, this.sampleRate);
+    const leadSamples = Math.round((LEAD_IN_MS / 1000) * this.sampleRate);
+    const padded = new Float32Array(leadSamples + merged.length);
+    padded.set(merged, leadSamples);
+    const wav = encodeWav(padded, this.sampleRate);
     const b64 = wavToBase64(wav);
 
     const tempUri = `${FileSystem.cacheDirectory ?? ''}${TEMP_PREFIX}${Date.now()}.wav`;
@@ -46,11 +52,8 @@ export class ExpoAudioPlayer implements IAudioPlayer {
       return;
     }
 
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
-    });
+    // Audio mode is set once at bootstrap. Avoid flipping allowsRecordingIOS
+    // per clause — that churn was correlated with first-word cuts.
 
     const { sound } = await Audio.Sound.createAsync(
       { uri: tempUri },
@@ -63,26 +66,14 @@ export class ExpoAudioPlayer implements IAudioPlayer {
       return;
     }
 
-    // Wait for playback to finish.
-    // Android (expo-av) can fire isLoaded=false before the sound has started
-    // due to an ExoPlayer state race. Guard: only treat isLoaded=false as
-    // "finished" after playback has actually started.
+    // Wait for playback to finish. We resolve ONLY on didJustFinish — earlier
+    // heuristics (resolve on !isPlaying after start, or on !isLoaded) caused
+    // the next clause's cleanup() → unloadAsync to interrupt expo-av mid-word
+    // whenever ExoPlayer reported a transient pause. didJustFinish is emitted
+    // reliably at end-of-stream on both Android and iOS.
     await new Promise<void>((resolve) => {
-      let playbackHasStarted = false;
       sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded) {
-          if (status.isPlaying) playbackHasStarted = true;
-          if (status.didJustFinish) {
-            resolve();
-            return;
-          }
-          if (playbackHasStarted && !status.isPlaying) {
-            resolve();
-            return;
-          }
-        } else {
-          if (playbackHasStarted) resolve();
-        }
+        if (status.isLoaded && status.didJustFinish) resolve();
       });
     });
 
