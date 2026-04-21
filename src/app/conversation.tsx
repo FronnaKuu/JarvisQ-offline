@@ -146,7 +146,10 @@ export default function ConversationScreen() {
           pitch: settings.ttsPitch,
           language: settings.ttsSystemLanguage,
         },
-        handsFreeMode: settings.handsFreeMode,
+        // handsFreeMode is driven per-session by the voice button below,
+        // not by settings — starting a voice session enables auto-rearm,
+        // explicit stop or hard-mute disables it.
+        handsFreeMode: false,
       },
     );
 
@@ -161,6 +164,9 @@ export default function ConversationScreen() {
   // Propagate live setting / active-conversation overrides to the long-lived
   // pipeline. The system prompt lives on the LLM responder now, so it is
   // updated separately — translation chats ignore this path entirely.
+  // handsFreeMode is intentionally excluded: it is owned by the voice-button
+  // interaction (start = auto-rearm, stop/mute = one-shot) so settings cannot
+  // overwrite a live session here.
   useEffect(() => {
     pipelineRef.current?.updateConfig({
       ttsBufferMode: settings.ttsBufferMode,
@@ -169,7 +175,6 @@ export default function ConversationScreen() {
         pitch: settings.ttsPitch,
         language: settings.ttsSystemLanguage,
       },
-      handsFreeMode: settings.handsFreeMode,
     });
     llmResponderRef.current?.updateConfig({
       systemPrompt: settings.llmSystemPrompt,
@@ -181,24 +186,35 @@ export default function ConversationScreen() {
     settings.ttsSpeed,
     settings.ttsPitch,
     settings.ttsSystemLanguage,
-    settings.handsFreeMode,
   ]);
 
   const handleVoicePress = useCallback(() => {
     const p = pipelineRef.current;
     if (!p) return;
     if (micMuted && phase === 'IDLE') return;
-    if (phase === 'LISTENING') void p.stopListening();
-    else if (phase === 'IDLE') void p.startListening();
-    else if (phase === 'SPEAKING') void p.interrupt();
+    if (phase === 'LISTENING') {
+      // Explicit stop ends the hands-free session: no auto-rearm after.
+      p.updateConfig({ handsFreeMode: false });
+      void p.stopListening();
+    } else if (phase === 'IDLE') {
+      // Starting from IDLE enters a hands-free session — the mic will
+      // reopen automatically after each turn (VAD-gated, so ambient noise
+      // does not trigger a new turn) until the user explicitly stops or
+      // hard-mutes.
+      p.updateConfig({ handsFreeMode: true });
+      void p.startListening();
+    } else if (phase === 'SPEAKING') {
+      void p.interrupt();
+    }
   }, [phase, micMuted]);
 
   const handleMicToggle = useCallback(() => {
     setMicMuted((prev) => {
       const next = !prev;
       if (next) {
-        // Muting: kill any in-flight listen immediately so the mic indicator
-        // and LED turn off right away, even if VAD was mid-recording.
+        // Hard-mute: cancel any in-flight listen and kill the hands-free
+        // session so the pipeline does not auto-rearm while muted.
+        pipelineRef.current?.updateConfig({ handsFreeMode: false });
         void pipelineRef.current?.stopListening();
       }
       return next;
