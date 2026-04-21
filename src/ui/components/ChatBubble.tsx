@@ -3,7 +3,9 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
+import Markdown from 'react-native-markdown-display';
 import { AppTheme } from '@ui/theme/theme';
+import { markdownStyles } from '@ui/theme/markdownStyles';
 import { formatMessageTimestamp } from '@core/utils/formatTime';
 import type { Message } from '@domain/types';
 
@@ -17,16 +19,26 @@ function ChatBubbleImpl({ message }: Props) {
   const timestampLabel = isPartial
     ? null
     : formatMessageTimestamp(message.timestampMs);
+  const displayText = message.text || (message.isStreaming ? '...' : '');
+  // Only render assistant responses as markdown; user bubbles are raw STT
+  // transcripts (or typed messages) that should not get reinterpreted as
+  // formatted text. Partial streaming bubbles also stay plain to avoid
+  // re-parsing on every token.
+  const useMarkdown = !isUser && !message.isStreaming && displayText.length > 0;
 
   return (
     <View style={[styles.wrapper, isUser ? styles.wrapperUser : styles.wrapperAssistant]}>
       <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
-        <Text
-          style={[styles.text, message.isStreaming && styles.streaming]}
-          variant="bodyMedium"
-        >
-          {message.text || (message.isStreaming ? '...' : '')}
-        </Text>
+        {useMarkdown ? (
+          <Markdown style={markdownStyles}>{displayText}</Markdown>
+        ) : (
+          <Text
+            style={[styles.text, message.isStreaming && styles.streaming]}
+            variant="bodyMedium"
+          >
+            {displayText}
+          </Text>
+        )}
       </View>
       {timestampLabel ? (
         <Text variant="labelSmall" style={styles.timestamp}>

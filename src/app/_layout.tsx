@@ -44,6 +44,7 @@ export default function RootLayout() {
         <Stack.Screen name="setup" options={{ title: 'Setup', headerShown: false }} />
         <Stack.Screen name="conversation" options={{ title: 'Conversation', headerShown: false }} />
         <Stack.Screen name="conversations" options={{ title: 'Conversations', headerShown: false }} />
+        <Stack.Screen name="mode-picker" options={{ title: 'New chat', headerShown: false }} />
         <Stack.Screen name="settings" options={{ title: 'Settings', headerShown: false }} />
       </Stack>
     </PaperProvider>

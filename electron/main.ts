@@ -30,10 +30,12 @@ import { useSettingsStore } from '@domain/SettingsStore';
 import { AppBootstrap } from '@core/bootstrap/AppBootstrap';
 import type { ServiceProgressSnapshot } from '@core/bootstrap/AppBootstrap';
 import { VoicePipeline } from '@core/pipeline/VoicePipeline';
+import { LlmResponder } from '@core/pipeline/LlmResponder';
 import { SttService } from '@core/inference/SttService';
 import { LlmService } from '@core/inference/LlmService';
 import { TtsService } from '@core/inference/TtsService';
 import { AppConfig } from '@core/config/AppConfig';
+import type { ServiceKind } from '@core/bootstrap/AppBootstrap';
 
 import { AppIpcChannels } from './ipcApi';
 
@@ -129,9 +131,16 @@ async function buildPipeline(window: BrowserWindow): Promise<VoicePipeline> {
   // `SttService`/`LlmService`/`TtsService` are singletons that keep a loaded
   // model across calls. The first run triggers download + warm-up via
   // AppBootstrap; subsequent pipeline turns are hot.
+  // Desktop keeps a single LLM pipeline (translation mode is mobile-only for
+  // now); the responder abstraction is still used so the core pipeline API
+  // matches mobile.
+  const responder = new LlmResponder(LlmService, {
+    systemPrompt: AppConfig.conversation.defaultSystemPrompt,
+  });
+
   return new VoicePipeline(
     {
-      services: { stt: SttService, llm: LlmService, tts: TtsService },
+      services: { stt: SttService, responder, tts: TtsService },
       recorder,
       audioPlayer: player,
     },
@@ -145,9 +154,6 @@ async function buildPipeline(window: BrowserWindow): Promise<VoicePipeline> {
       onError: (message) => send(AppIpcChannels.pipelineError, { message }),
     },
     {
-      systemPrompt: AppConfig.conversation.defaultSystemPrompt,
-      temperature: AppConfig.llm.defaultTemperature,
-      maxTokens: AppConfig.llm.defaultMaxTokens,
       ttsBufferMode: AppConfig.tts.defaultBufferMode,
     },
   );
@@ -161,10 +167,10 @@ function registerIpcHandlers(window: BrowserWindow): void {
     if (!store.isLoaded) await store.loadSettings();
     const { settings, modelIds } = useSettingsStore.getState();
     const bootstrap = new AppBootstrap();
-    await bootstrap.ensureReady(settings, modelIds, {
-      onServiceStart: (kind, label) =>
+    const handlers = {
+      onServiceStart: (kind: ServiceKind, label: string) =>
         sender.send(AppIpcChannels.bootstrapStart, { kind, label }),
-      onServiceProgress: (kind, p: ServiceProgressSnapshot) =>
+      onServiceProgress: (kind: ServiceKind, p: ServiceProgressSnapshot) =>
         sender.send(AppIpcChannels.bootstrapProgress, {
           kind,
           label: bootstrap.profileLabels(modelIds)[kind],
@@ -172,8 +178,20 @@ function registerIpcHandlers(window: BrowserWindow): void {
           bytesDownloaded: p.bytesDownloaded,
           totalBytes: p.totalBytes,
         }),
-      onServiceDone: (kind) => sender.send(AppIpcChannels.bootstrapDone, { kind }),
-    });
+      onServiceDone: (kind: ServiceKind) =>
+        sender.send(AppIpcChannels.bootstrapDone, { kind }),
+    };
+    await bootstrap.ensureAlwaysOn(settings, modelIds, handlers);
+    // Desktop preloads the LLM eagerly — there's no mode picker yet on this
+    // target, so the conversation responder must be ready by the time the
+    // renderer attaches.
+    await bootstrap.ensureResponderReady(
+      'conversation',
+      settings,
+      modelIds,
+      {},
+      handlers,
+    );
   });
 
   ipcMain.handle(AppIpcChannels.sendText, async (_evt: unknown, raw: unknown) => {

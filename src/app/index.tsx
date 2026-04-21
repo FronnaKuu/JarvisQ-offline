@@ -17,7 +17,10 @@ import { getPlatform } from '@core/platform/PlatformContainer';
 import { AppTheme } from '@ui/theme/theme';
 import type { ServiceKind } from '@core/bootstrap/AppBootstrap';
 
-const SERVICE_ORDER: ServiceKind[] = ['stt', 'llm', 'tts'];
+// Only the always-on services run during bootstrap. The responder (llm or
+// Bergamot translator) is downloaded lazily when the user first opens a
+// chat of that mode, so it does not contribute to this progress bar.
+const SERVICE_ORDER: ServiceKind[] = ['stt', 'tts'];
 
 export default function Index() {
   const router = useRouter();
@@ -45,11 +48,17 @@ export default function Index() {
     })();
   }, [settingsLoaded, conversationsLoaded, phase, start]);
 
+  const hasConversations = useConversationStore(
+    (s) => s.conversations.length > 0,
+  );
+
   useEffect(() => {
-    if (phase === 'ready') {
-      router.replace('/conversation');
-    }
-  }, [phase, router]);
+    if (phase !== 'ready') return;
+    // Existing users land on their last chat; first-run (empty list) routes to
+    // the mode picker so the user chooses 'conversation' or 'translation'
+    // before any responder model is downloaded.
+    router.replace(hasConversations ? '/conversation' : '/mode-picker');
+  }, [phase, hasConversations, router]);
 
   const { overallPercent, hasProgress } = useMemo(() => {
     let sum = 0;

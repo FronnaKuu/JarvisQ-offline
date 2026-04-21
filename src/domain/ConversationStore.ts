@@ -1,13 +1,14 @@
 // ─── Conversation Store (Zustand) ────────────────────────────────────────────
 
 import { create } from 'zustand';
-import type { Conversation, Message } from './types';
+import type { Conversation, ConversationMode, Message } from './types';
 import {
   getAllConversations,
   insertConversation,
   updateConversation,
   deleteConversation,
   makeNewConversation,
+  type NewConversationOptions,
 } from '@data/repositories/ConversationRepository';
 import {
   getMessagesByConversation,
@@ -31,7 +32,10 @@ interface ConversationStore {
   isLoaded: boolean;
 
   loadConversations: () => Promise<void>;
-  createConversation: () => Promise<Conversation>;
+  createConversation: (
+    mode?: ConversationMode,
+    opts?: NewConversationOptions,
+  ) => Promise<Conversation>;
   selectConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   updateConversation: (
@@ -62,8 +66,8 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
     set({ conversations, isLoaded: true });
   },
 
-  createConversation: async () => {
-    const conv = makeNewConversation();
+  createConversation: async (mode = 'conversation', opts = {}) => {
+    const conv = makeNewConversation(mode, opts);
     await insertConversation(conv);
     set((s) => ({
       conversations: [conv, ...s.conversations],

@@ -1,7 +1,14 @@
 // ---- Conversation Screen -------------------------------------------------
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform as RNPlatform, StyleSheet, View } from 'react-native';
+import {
+  FlatList,
+  KeyboardAvoidingView,
+  Platform as RNPlatform,
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Appbar, IconButton, Menu, Snackbar, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,14 +17,19 @@ import { ChatBubble } from '@ui/components/ChatBubble';
 import { VoiceButton } from '@ui/components/VoiceButton';
 import { TextComposer } from '@ui/components/TextComposer';
 import { VoicePipeline } from '@core/pipeline/VoicePipeline';
+import { LlmResponder } from '@core/pipeline/LlmResponder';
+import { TranslationResponder } from '@core/pipeline/TranslationResponder';
 import { SttService } from '@core/inference/SttService';
 import { LlmService } from '@core/inference/LlmService';
+import { TranslatorService } from '@core/inference/TranslatorService';
 import { TtsService } from '@core/inference/TtsService';
 import { SystemTtsService } from '@platform/mobile/SystemTtsService';
 import { Platform } from '@platform/mobile/Platform';
 import { useConversationStore } from '@domain/ConversationStore';
+import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { AppTheme } from '@ui/theme/theme';
+import type { IResponder } from '@core/inference/types';
 import type { Message, PipelinePhase } from '@domain/types';
 
 export default function ConversationScreen() {
@@ -27,10 +39,13 @@ export default function ConversationScreen() {
   const addAssistantMessage = useConversationStore((s) => s.addAssistantMessage);
   const appendAssistantToken = useConversationStore((s) => s.appendAssistantToken);
   const finalizeAssistantMessage = useConversationStore((s) => s.finalizeAssistantMessage);
-  const createConversation = useConversationStore((s) => s.createConversation);
   const messages = useConversationStore((s) => s.messages);
   const activeConversation = useConversationStore((s) => s.activeConversation());
+  const ensureResponder = useBootstrapStore((s) => s.ensureResponder);
   const settings = useSettingsStore((s) => s.settings);
+  const mode = activeConversation?.mode ?? 'conversation';
+  const sourceLang = activeConversation?.sourceLang ?? null;
+  const targetLang = activeConversation?.targetLang ?? null;
 
   const [phase, setPhase] = useState<PipelinePhase>('IDLE');
   const [partialText, setPartialText] = useState('');
@@ -39,10 +54,12 @@ export default function ConversationScreen() {
   const [inputMode, setInputMode] = useState<'voice' | 'text'>('voice');
   const [atBottom, setAtBottom] = useState(true);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [controlsHeight, setControlsHeight] = useState(0);
   const listRef = useRef<FlatList<Message>>(null);
   const assistantMsgIdRef = useRef<string | null>(null);
   const pipelineRef = useRef<VoicePipeline | null>(null);
   const llmFullTextRef = useRef('');
+  const llmResponderRef = useRef<LlmResponder | null>(null);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -50,7 +67,17 @@ export default function ConversationScreen() {
     }
   }, [messages.length]);
 
+  // The pipeline is rebuilt whenever the chat mode changes, because the
+  // responder (LLM vs Bergamot translator) is chosen once at construction.
+  // Translation direction changes (source/target lang) also rebuild — the
+  // translator service keeps only one loaded model and needs a fresh load.
   useEffect(() => {
+    // Kick off the on-demand responder download/load for this mode. This is
+    // also done by the mode picker; calling it again here is a no-op when
+    // the model is already loaded and covers the path of opening an existing
+    // chat after an app restart.
+    void ensureResponder(mode, { sourceLang, targetLang });
+
     const recorder = Platform.createAudioRecorder({
       onStateChange: () => {},
       onAmplitude: (db) => setAmplitude(db),
@@ -58,9 +85,20 @@ export default function ConversationScreen() {
     const audioPlayer = Platform.createAudioPlayer();
 
     const tts = settings.ttsEngine === 'system' ? SystemTtsService : TtsService;
+    const responder: IResponder =
+      mode === 'translation'
+        ? new TranslationResponder(TranslatorService)
+        : (() => {
+            const r = new LlmResponder(LlmService, {
+              systemPrompt: settings.llmSystemPrompt,
+            });
+            llmResponderRef.current = r;
+            return r;
+          })();
+
     const pipeline = new VoicePipeline(
       {
-        services: { stt: SttService, llm: LlmService, tts },
+        services: { stt: SttService, responder, tts },
         recorder,
         audioPlayer,
       },
@@ -98,53 +136,48 @@ export default function ConversationScreen() {
         },
       },
       {
-        // Settings is the single source of truth for the system prompt — the
-        // per-conversation field in the DB is currently unused (no UI to edit
-        // it) and was shadowing every global edit because ?? only falls
-        // through on null/undefined, not on the baked-in default string.
-        systemPrompt: settings.llmSystemPrompt,
-        maxTokens: activeConversation?.maxResponseTokens ?? settings.llmMaxTokens,
-        temperature: activeConversation?.temperature ?? settings.llmTemperature,
         ttsBufferMode: settings.ttsBufferMode,
         ttsOptions: {
           speed: activeConversation?.ttsSpeed ?? settings.ttsSpeed,
           pitch: settings.ttsPitch,
           language: settings.ttsSystemLanguage,
         },
+        handsFreeMode: settings.handsFreeMode,
       },
     );
 
     pipelineRef.current = pipeline;
-    return () => { void pipeline.stopListening(); };
+    return () => {
+      void pipeline.stopListening();
+      llmResponderRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mode, sourceLang, targetLang]);
 
-  // Propagate live setting / active-conversation overrides to the long-lived pipeline.
-  // Without this the pipeline captures config at mount time, so edits to system
-  // prompt / generation params in Settings never reach the next LLM turn.
+  // Propagate live setting / active-conversation overrides to the long-lived
+  // pipeline. The system prompt lives on the LLM responder now, so it is
+  // updated separately — translation chats ignore this path entirely.
   useEffect(() => {
     pipelineRef.current?.updateConfig({
-      systemPrompt: settings.llmSystemPrompt,
-      maxTokens: activeConversation?.maxResponseTokens ?? settings.llmMaxTokens,
-      temperature: activeConversation?.temperature ?? settings.llmTemperature,
       ttsBufferMode: settings.ttsBufferMode,
       ttsOptions: {
         speed: activeConversation?.ttsSpeed ?? settings.ttsSpeed,
         pitch: settings.ttsPitch,
         language: settings.ttsSystemLanguage,
       },
+      handsFreeMode: settings.handsFreeMode,
+    });
+    llmResponderRef.current?.updateConfig({
+      systemPrompt: settings.llmSystemPrompt,
     });
   }, [
-    activeConversation?.maxResponseTokens,
-    activeConversation?.temperature,
     activeConversation?.ttsSpeed,
     settings.llmSystemPrompt,
-    settings.llmMaxTokens,
-    settings.llmTemperature,
     settings.ttsBufferMode,
     settings.ttsSpeed,
     settings.ttsPitch,
     settings.ttsSystemLanguage,
+    settings.handsFreeMode,
   ]);
 
   const handleVoicePress = useCallback(() => {
@@ -161,11 +194,11 @@ export default function ConversationScreen() {
     if (p && phase === 'IDLE') void p.startListening();
   }, [phase]);
 
-  const handleNewConversation = useCallback(async () => {
+  const handleNewConversation = useCallback(() => {
     void pipelineRef.current?.stopListening();
     pipelineRef.current?.clearHistory();
-    await createConversation();
-  }, [createConversation]);
+    router.push('/mode-picker');
+  }, [router]);
 
   const handleTextSubmit = useCallback((text: string) => {
     const p = pipelineRef.current;
@@ -207,6 +240,14 @@ export default function ConversationScreen() {
     [],
   );
 
+  const handleControlsLayout = useCallback((e: LayoutChangeEvent) => {
+    setControlsHeight(e.nativeEvent.layout.height);
+  }, []);
+
+  const handleScrollToBottom = useCallback(() => {
+    listRef.current?.scrollToEnd({ animated: true });
+  }, []);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <Appbar.Header style={styles.header} elevated={false} statusBarHeight={0}>
@@ -239,7 +280,7 @@ export default function ConversationScreen() {
           <Menu.Item
             leadingIcon="plus"
             title="New conversation"
-            onPress={() => { setMenuVisible(false); void handleNewConversation(); }}
+            onPress={() => { setMenuVisible(false); handleNewConversation(); }}
           />
           <Menu.Item
             leadingIcon="format-list-bulleted"
@@ -256,66 +297,75 @@ export default function ConversationScreen() {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={RNPlatform.OS === 'ios' ? 'padding' : 'height'}
+        // Android handles keyboard via android:windowSoftInputMode=adjustResize
+        // in the manifest. Using KeyboardAvoidingView with behavior='height'
+        // on top of that fights the native layout and causes the bottom
+        // controls bar to jitter / grow as the list fills. Leaving behavior
+        // undefined on Android means the native resize takes effect unopposed.
+        behavior={RNPlatform.OS === 'ios' ? 'padding' : undefined}
       >
-      <FlatList
-        ref={listRef}
-        data={displayMessages}
-        keyExtractor={(m) => m.id}
-        renderItem={renderItem}
-        removeClippedSubviews
-        initialNumToRender={12}
-        maxToRenderPerBatch={8}
-        windowSize={7}
-        contentContainerStyle={[
-          styles.chatContent,
-          displayMessages.length === 0 && styles.chatContentEmpty,
-        ]}
-        style={styles.chatList}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text variant="bodyMedium" style={styles.emptyText}>
-              {inputMode === 'voice'
-                ? 'Tap the microphone to start'
-                : 'Type a message to start'}
-            </Text>
-          </View>
-        }
-        onScroll={({ nativeEvent }) => {
-          const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
-          const distanceFromBottom =
-            contentSize.height - (contentOffset.y + layoutMeasurement.height);
-          setAtBottom(distanceFromBottom < 32);
-        }}
-        scrollEventThrottle={64}
-      />
-
-      {!atBottom && messages.length > 0 ? (
-        <IconButton
-          icon="chevron-double-down"
-          mode="contained"
-          size={20}
-          style={styles.scrollToBottom}
-          accessibilityLabel="Scroll to latest"
-          onPress={() => listRef.current?.scrollToEnd({ animated: true })}
+        <FlatList
+          ref={listRef}
+          data={displayMessages}
+          keyExtractor={(m) => m.id}
+          renderItem={renderItem}
+          removeClippedSubviews
+          initialNumToRender={12}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          contentContainerStyle={[
+            styles.chatContent,
+            displayMessages.length === 0 && styles.chatContentEmpty,
+          ]}
+          style={styles.chatList}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text variant="bodyMedium" style={styles.emptyText}>
+                {inputMode === 'voice'
+                  ? 'Tap the microphone to start'
+                  : 'Type a message to start'}
+              </Text>
+            </View>
+          }
+          onScroll={({ nativeEvent }) => {
+            const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
+            const distanceFromBottom =
+              contentSize.height - (contentOffset.y + layoutMeasurement.height);
+            setAtBottom(distanceFromBottom < AppTheme.layout.atBottomThresholdPx);
+          }}
+          scrollEventThrottle={64}
         />
-      ) : null}
 
-      <View
-        style={[
-          styles.controls,
-          { paddingBottom: AppTheme.spacing.sm + insets.bottom },
-        ]}
-      >
-        {inputMode === 'voice' ? (
-          <VoiceButton phase={phase} amplitude={amplitude} onPress={handleVoicePress} />
-        ) : (
-          <TextComposer
-            disabled={phase !== 'IDLE'}
-            onSubmit={handleTextSubmit}
+        {!atBottom && messages.length > 0 && controlsHeight > 0 ? (
+          <IconButton
+            icon="chevron-double-down"
+            mode="contained"
+            size={20}
+            style={[
+              styles.scrollToBottom,
+              { bottom: controlsHeight + AppTheme.spacing.sm },
+            ]}
+            accessibilityLabel="Scroll to latest"
+            onPress={handleScrollToBottom}
           />
-        )}
-      </View>
+        ) : null}
+
+        <View
+          onLayout={handleControlsLayout}
+          style={[
+            styles.controls,
+            { paddingBottom: AppTheme.spacing.sm + insets.bottom },
+          ]}
+        >
+          {inputMode === 'voice' ? (
+            <VoiceButton phase={phase} amplitude={amplitude} onPress={handleVoicePress} />
+          ) : (
+            <TextComposer
+              disabled={phase !== 'IDLE'}
+              onSubmit={handleTextSubmit}
+            />
+          )}
+        </View>
       </KeyboardAvoidingView>
 
       <Snackbar
@@ -373,13 +423,15 @@ const styles = StyleSheet.create({
   scrollToBottom: {
     position: 'absolute',
     right: AppTheme.spacing.lg,
-    bottom: 160,
     backgroundColor: AppTheme.colors.surfaceVariant,
+    zIndex: 2,
+    elevation: 4,
   },
   controls: {
     paddingTop: AppTheme.spacing.md,
     alignItems: 'center',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: AppTheme.colors.surfaceVariant,
+    backgroundColor: AppTheme.colors.background,
   },
 });

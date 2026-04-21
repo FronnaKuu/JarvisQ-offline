@@ -5,7 +5,7 @@ import {
   rowToConversation,
   type ConversationRow,
 } from '../database';
-import type { Conversation } from '@domain/types';
+import type { Conversation, ConversationMode } from '@domain/types';
 import { AppConfig } from '@core/config/AppConfig';
 
 export async function getAllConversations(): Promise<Conversation[]> {
@@ -31,8 +31,9 @@ export async function insertConversation(
   await getDatabase().run(
     `INSERT INTO conversations
        (id, title, created_at, last_updated_at, system_prompt,
-        max_context_turns, temperature, tts_speed, max_response_tokens)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        max_context_turns, temperature, tts_speed, max_response_tokens,
+        mode, source_lang, target_lang)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       conversation.id,
       conversation.title,
@@ -43,6 +44,9 @@ export async function insertConversation(
       conversation.temperature,
       conversation.ttsSpeed,
       conversation.maxResponseTokens,
+      conversation.mode,
+      conversation.sourceLang,
+      conversation.targetLang,
     ],
   );
 }
@@ -60,12 +64,15 @@ export async function updateConversation(
 
   const columnMap: Record<string, string> = {
     title: 'title',
+    mode: 'mode',
     lastUpdatedAt: 'last_updated_at',
     systemPrompt: 'system_prompt',
     maxContextTurns: 'max_context_turns',
     temperature: 'temperature',
     ttsSpeed: 'tts_speed',
     maxResponseTokens: 'max_response_tokens',
+    sourceLang: 'source_lang',
+    targetLang: 'target_lang',
   };
 
   const setClauses = entries
@@ -83,11 +90,21 @@ export async function deleteConversation(id: string): Promise<void> {
   await getDatabase().run('DELETE FROM conversations WHERE id = ?', [id]);
 }
 
-export function makeNewConversation(): Conversation {
+export interface NewConversationOptions {
+  sourceLang?: string | null;
+  targetLang?: string | null;
+  title?: string;
+}
+
+export function makeNewConversation(
+  mode: ConversationMode = 'conversation',
+  opts: NewConversationOptions = {},
+): Conversation {
   const now = Date.now();
   return {
     id: `conv_${now}_${Math.random().toString(16).slice(2)}`,
-    title: AppConfig.conversation.defaultTitle,
+    title: opts.title ?? AppConfig.conversation.defaultTitle,
+    mode,
     createdAt: now,
     lastUpdatedAt: now,
     systemPrompt: AppConfig.conversation.defaultSystemPrompt,
@@ -95,5 +112,7 @@ export function makeNewConversation(): Conversation {
     temperature: AppConfig.llm.defaultTemperature,
     ttsSpeed: AppConfig.tts.defaultSpeed,
     maxResponseTokens: AppConfig.llm.defaultMaxTokens,
+    sourceLang: mode === 'translation' ? (opts.sourceLang ?? null) : null,
+    targetLang: mode === 'translation' ? (opts.targetLang ?? null) : null,
   };
 }

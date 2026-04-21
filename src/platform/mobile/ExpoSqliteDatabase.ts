@@ -19,7 +19,10 @@ const SCHEMA_SQL = `
     max_context_turns INTEGER NOT NULL DEFAULT 10,
     temperature REAL NOT NULL DEFAULT 0.7,
     tts_speed REAL NOT NULL DEFAULT 1.0,
-    max_response_tokens INTEGER NOT NULL DEFAULT 256
+    max_response_tokens INTEGER NOT NULL DEFAULT 256,
+    mode TEXT NOT NULL DEFAULT 'conversation',
+    source_lang TEXT,
+    target_lang TEXT
   );
 
   CREATE TABLE IF NOT EXISTS messages (
@@ -35,12 +38,24 @@ const SCHEMA_SQL = `
     ON messages(conversation_id);
 `;
 
+const MIGRATIONS: readonly string[] = [
+  `ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'conversation'`,
+  `ALTER TABLE conversations ADD COLUMN source_lang TEXT`,
+  `ALTER TABLE conversations ADD COLUMN target_lang TEXT`,
+];
+
 export class ExpoSqliteDatabase implements IDatabase {
   private constructor(private readonly db: SQLite.SQLiteDatabase) {}
 
   static async open(): Promise<ExpoSqliteDatabase> {
     const handle = await SQLite.openDatabaseAsync(DB_NAME);
     await handle.execAsync(SCHEMA_SQL);
+    // Idempotent migrations for DBs created before the translation-mode columns
+    // existed. SQLite rejects `ALTER TABLE ADD COLUMN IF NOT EXISTS` before
+    // 3.35, so we catch the "duplicate column" error instead.
+    for (const sql of MIGRATIONS) {
+      try { await handle.execAsync(sql); } catch { /* already applied */ }
+    }
     return new ExpoSqliteDatabase(handle);
   }
 

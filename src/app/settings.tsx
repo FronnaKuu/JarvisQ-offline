@@ -215,6 +215,28 @@ export default function SettingsScreen() {
         <Divider style={styles.divider} />
 
         <Text variant="titleMedium" style={styles.sectionTitle}>
+          Voice
+        </Text>
+        <View style={styles.row}>
+          <View style={styles.rowLabelColumn}>
+            <Text variant="bodyMedium" style={styles.rowLabel}>
+              Hands-free mode
+            </Text>
+            <Text variant="bodySmall" style={styles.rowHelper}>
+              Re-open the microphone automatically after the assistant speaks.
+              Disable on devices without echo cancellation to avoid self-triggered turns.
+            </Text>
+          </View>
+          <Switch
+            value={settings.handsFreeMode}
+            onValueChange={(v) => void updateSettings({ handsFreeMode: v })}
+            color={AppTheme.colors.primary}
+          />
+        </View>
+
+        <Divider style={styles.divider} />
+
+        <Text variant="titleMedium" style={styles.sectionTitle}>
           Hardware
         </Text>
         <View style={styles.row}>
@@ -274,6 +296,14 @@ const styles = StyleSheet.create({
   },
   rowLabel: {
     color: AppTheme.colors.onBackground,
+  },
+  rowLabelColumn: {
+    flex: 1,
+    paddingRight: AppTheme.spacing.md,
+  },
+  rowHelper: {
+    color: AppTheme.colors.outline,
+    marginTop: 2,
   },
   about: {
     color: AppTheme.colors.outline,

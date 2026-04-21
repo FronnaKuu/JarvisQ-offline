@@ -44,6 +44,10 @@ const defaultSettings: AppSettings = {
   ttsBufferMode: AppConfig.tts.defaultBufferMode,
   ttsSystemLanguage: AppConfig.tts.defaultSystemLanguage,
   useGpu: true,
+  handsFreeMode: false,
+  translationEngine: AppConfig.translation.defaultEngine,
+  translationSourceLang: AppConfig.translation.defaultSourceLang,
+  translationTargetLang: AppConfig.translation.defaultTargetLang,
 };
 
 const defaultModelIds: ModelIds = {

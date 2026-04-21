@@ -24,7 +24,10 @@ const SCHEMA_SQL = `
     max_context_turns INTEGER NOT NULL DEFAULT 10,
     temperature REAL NOT NULL DEFAULT 0.7,
     tts_speed REAL NOT NULL DEFAULT 1.0,
-    max_response_tokens INTEGER NOT NULL DEFAULT 256
+    max_response_tokens INTEGER NOT NULL DEFAULT 256,
+    mode TEXT NOT NULL DEFAULT 'conversation',
+    source_lang TEXT,
+    target_lang TEXT
   );
 
   CREATE TABLE IF NOT EXISTS messages (
@@ -54,6 +57,12 @@ function coerceParams(
   });
 }
 
+const MIGRATIONS: readonly string[] = [
+  `ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'conversation'`,
+  `ALTER TABLE conversations ADD COLUMN source_lang TEXT`,
+  `ALTER TABLE conversations ADD COLUMN target_lang TEXT`,
+];
+
 export class NodeSqliteDatabase implements IDatabase {
   private constructor(private readonly db: DatabaseSync) {}
 
@@ -61,6 +70,12 @@ export class NodeSqliteDatabase implements IDatabase {
     const dbPath = path.join(baseDirectory, DB_FILENAME);
     const handle = new DatabaseSync(dbPath);
     handle.exec(SCHEMA_SQL);
+    // Idempotent migrations for pre-translation-mode DBs — SQLite rejects
+    // `ALTER TABLE ADD COLUMN IF NOT EXISTS` before 3.35, so swallow the
+    // "duplicate column" error if the column is already present.
+    for (const sql of MIGRATIONS) {
+      try { handle.exec(sql); } catch { /* already applied */ }
+    }
     return new NodeSqliteDatabase(handle);
   }
 

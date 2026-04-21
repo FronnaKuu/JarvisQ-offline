@@ -4,6 +4,16 @@
 // an HTTP fallback configuration for resilience when P2P peers are unavailable.
 
 import {
+  BERGAMOT_EN_IT,
+  BERGAMOT_IT_EN,
+  BERGAMOT_EN_ES,
+  BERGAMOT_ES_EN,
+  BERGAMOT_EN_FR,
+  BERGAMOT_FR_EN,
+  BERGAMOT_EN_DE,
+  BERGAMOT_DE_EN,
+  BERGAMOT_EN_PT,
+  BERGAMOT_PT_EN,
   WHISPER_BASE_Q8_0,
   WHISPER_TINY_Q8_0,
   WHISPER_SMALL_Q8_0,
@@ -36,6 +46,7 @@ import {
 import type { SttLoadConfig, WhisperSttLoadConfig } from '@core/inference/SttService';
 import type { LlmLoadConfig } from '@core/inference/LlmService';
 import type { TtsLoadConfig } from '@core/inference/TtsService';
+import type { TranslatorLoadConfig } from '@core/inference/TranslatorService';
 
 // ─── STT Profiles ─────────────────────────────────────────────────────────────
 
@@ -316,3 +327,59 @@ export const TTS_PROFILES: Record<string, TtsProfile> = {
 };
 
 export const DEFAULT_TTS_PROFILE_ID = 'supertonic2';
+
+// ─── Translator Profiles (Bergamot NMT) ──────────────────────────────────────
+// Each profile is a directional pair: source -> target. Keys are BCP-47
+// "<from>-<to>" strings and MUST match AppConfig.translation.supportedPairs.
+
+export interface TranslatorProfile {
+  /** Pair id, e.g. "en-it". */
+  id: string;
+  label: string;
+  estimatedBytes: number;
+  from: string;
+  to: string;
+  buildLoadConfig: (useGpu: boolean) => TranslatorLoadConfig;
+}
+
+// The SDK Bergamot pair models are ~20–30 MB each; vocab and shortlist files
+// are auto-derived from modelSrc, so only one constant is needed per pair.
+function bergamotProfile(
+  id: string,
+  label: string,
+  from: string,
+  to: string,
+  modelConstant: { src: string; modelId: string },
+): TranslatorProfile {
+  return {
+    id,
+    label,
+    estimatedBytes: 30_000_000,
+    from,
+    to,
+    buildLoadConfig: (useGpu) => ({
+      engine: 'bergamot',
+      modelConstant,
+      from,
+      to,
+      useGpu,
+    }),
+  };
+}
+
+export const TRANSLATOR_PROFILES: Record<string, TranslatorProfile> = {
+  'en-it': bergamotProfile('en-it', 'Bergamot EN→IT (~30 MB)', 'en', 'it', BERGAMOT_EN_IT),
+  'it-en': bergamotProfile('it-en', 'Bergamot IT→EN (~30 MB)', 'it', 'en', BERGAMOT_IT_EN),
+  'en-es': bergamotProfile('en-es', 'Bergamot EN→ES (~30 MB)', 'en', 'es', BERGAMOT_EN_ES),
+  'es-en': bergamotProfile('es-en', 'Bergamot ES→EN (~30 MB)', 'es', 'en', BERGAMOT_ES_EN),
+  'en-fr': bergamotProfile('en-fr', 'Bergamot EN→FR (~30 MB)', 'en', 'fr', BERGAMOT_EN_FR),
+  'fr-en': bergamotProfile('fr-en', 'Bergamot FR→EN (~30 MB)', 'fr', 'en', BERGAMOT_FR_EN),
+  'en-de': bergamotProfile('en-de', 'Bergamot EN→DE (~30 MB)', 'en', 'de', BERGAMOT_EN_DE),
+  'de-en': bergamotProfile('de-en', 'Bergamot DE→EN (~30 MB)', 'de', 'en', BERGAMOT_DE_EN),
+  'en-pt': bergamotProfile('en-pt', 'Bergamot EN→PT (~30 MB)', 'en', 'pt', BERGAMOT_EN_PT),
+  'pt-en': bergamotProfile('pt-en', 'Bergamot PT→EN (~30 MB)', 'pt', 'en', BERGAMOT_PT_EN),
+};
+
+export function getTranslatorProfileId(from: string, to: string): string {
+  return `${from}-${to}`;
+}

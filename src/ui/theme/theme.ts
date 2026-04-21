@@ -26,6 +26,12 @@ export const Radius = {
   pill: 999,
 } as const;
 
+export const Layout = {
+  // Distance-from-bottom (in pixels) below which the chat is considered
+  // "at bottom" — drives the scroll-to-latest chevron's visibility.
+  atBottomThresholdPx: 32,
+} as const;
+
 export const Typography = {
   titleLarge: { fontSize: 22, fontWeight: '700' as const, letterSpacing: 0 },
   titleMedium: { fontSize: 18, fontWeight: '700' as const, letterSpacing: 0 },
@@ -54,6 +60,7 @@ export interface AppThemeType extends MD3Theme {
   spacing: typeof Spacing;
   radius: typeof Radius;
   typography: typeof Typography;
+  layout: typeof Layout;
   colors: MD3Theme['colors'] & typeof ExtendedColors;
 }
 
@@ -62,6 +69,7 @@ export const AppTheme: AppThemeType = {
   spacing: Spacing,
   radius: Radius,
   typography: Typography,
+  layout: Layout,
   colors: {
     ...MD3DarkTheme.colors,
     primary: '#7B9EFF',

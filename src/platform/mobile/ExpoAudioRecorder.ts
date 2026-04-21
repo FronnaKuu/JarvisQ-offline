@@ -42,18 +42,31 @@ export class ExpoAudioRecorder implements IAudioRecorder {
   private speechDetected = false;
   private meteringAvailable = false;
   private stopResolve: ((uri: string | null) => void) | null = null;
+  private preRollDeadline = 0;
+  private lastStatusTs = 0;
+  private cumulativeSpeechMs = 0;
+  private peakDb = -160;
 
   private readonly silenceThresholdDb: number;
   private readonly speechThresholdDb: number;
   private readonly silenceDurationMs: number;
+  private readonly minSpeechDurationMs: number;
+  private readonly speechPeakThresholdDb: number;
   private readonly listenTimeoutMs: number;
+  private readonly preRollMs: number;
+  private readonly androidBitrate: number;
 
   constructor(callbacks: AudioRecorderCallbacks) {
     this.callbacks = callbacks;
     this.silenceThresholdDb = AppConfig.vad.silenceThresholdDb;
     this.speechThresholdDb = AppConfig.vad.speechThresholdDb;
     this.silenceDurationMs = AppConfig.vad.silenceDurationMs;
+    this.minSpeechDurationMs = AppConfig.vad.minSpeechDurationMs;
+    this.speechPeakThresholdDb =
+      AppConfig.vad.speechThresholdDb + AppConfig.vad.peakMarginDb;
     this.listenTimeoutMs = AppConfig.pipeline.listenTimeoutMs;
+    this.preRollMs = AppConfig.recording.preRollMs;
+    this.androidBitrate = AppConfig.recording.androidBitrate;
   }
 
   get isRecording(): boolean {
@@ -72,6 +85,9 @@ export class ExpoAudioRecorder implements IAudioRecorder {
     this.recording = new Audio.Recording();
     this.speechDetected = false;
     this.meteringAvailable = false;
+    this.cumulativeSpeechMs = 0;
+    this.peakDb = -160;
+    this.lastStatusTs = 0;
 
     await this.recording.prepareToRecordAsync({
       android: {
@@ -80,7 +96,7 @@ export class ExpoAudioRecorder implements IAudioRecorder {
         audioEncoder: Audio.AndroidAudioEncoder.AAC,
         sampleRate: SAMPLE_RATE,
         numberOfChannels: 1,
-        bitRate: 128000,
+        bitRate: this.androidBitrate,
       },
       ios: {
         extension: '.wav',
@@ -98,9 +114,19 @@ export class ExpoAudioRecorder implements IAudioRecorder {
     });
 
     const startTime = Date.now();
+    this.preRollDeadline = startTime + this.preRollMs;
 
     this.recording.setOnRecordingStatusUpdate((status) => {
       if (!status.isRecording) return;
+
+      // Ignore metering/VAD during the pre-roll window: the initial frames
+      // get discarded by the server-side AAC decoder, and any amplitude here
+      // does not correspond to audio the model will ever see.
+      const now = Date.now();
+      if (now < this.preRollDeadline) {
+        this.lastStatusTs = now;
+        return;
+      }
 
       const rawDb = status.metering;
       if (rawDb !== null && rawDb !== undefined) {
@@ -109,7 +135,23 @@ export class ExpoAudioRecorder implements IAudioRecorder {
       const db = rawDb ?? -160;
       this.callbacks.onAmplitude(db);
 
-      if (db > this.speechThresholdDb && !this.speechDetected) {
+      // Accumulate above-threshold time between consecutive status updates
+      // (expo-av ticks at ~100 ms). Speech is "detected" only when both the
+      // sustained-time and peak-amplitude gates pass; this filters out brief
+      // transients like the TTS tail echoed back through the speaker.
+      const dtMs = this.lastStatusTs === 0 ? 0 : now - this.lastStatusTs;
+      this.lastStatusTs = now;
+
+      if (db > this.speechThresholdDb) {
+        this.cumulativeSpeechMs += dtMs;
+        if (db > this.peakDb) this.peakDb = db;
+      }
+
+      if (
+        !this.speechDetected &&
+        this.cumulativeSpeechMs >= this.minSpeechDurationMs &&
+        this.peakDb >= this.speechPeakThresholdDb
+      ) {
         this.speechDetected = true;
         this.clearSilenceTimer();
       }
@@ -130,7 +172,7 @@ export class ExpoAudioRecorder implements IAudioRecorder {
 
     this.listenTimer = setTimeout(() => {
       void this.stopAndResolve();
-    }, this.listenTimeoutMs);
+    }, this.listenTimeoutMs + this.preRollMs);
 
     const uri = await new Promise<string | null>((resolve) => {
       this.stopResolve = resolve;

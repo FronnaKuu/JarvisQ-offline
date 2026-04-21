@@ -7,9 +7,11 @@ import { create } from 'zustand';
 import { AppBootstrap } from '@core/bootstrap/AppBootstrap';
 import type {
   BootstrapHandlers,
+  ResponderLoadOptions,
   ServiceKind,
   ServiceProgressSnapshot,
 } from '@core/bootstrap/AppBootstrap';
+import type { ConversationMode } from './types';
 import { useSettingsStore } from './SettingsStore';
 import { useConversationStore } from './ConversationStore';
 
@@ -29,7 +31,21 @@ interface BootstrapState {
   phase: BootstrapPhase;
   errorMessage: string | null;
   services: Record<ServiceKind, ServiceStatus>;
+  /**
+   * Loads the always-on services (STT + TTS). Does NOT auto-create a
+   * conversation — the mode picker is responsible for that, so the first
+   * launch flow becomes: bootstrap → mode picker → chat.
+   */
   start: () => Promise<void>;
+  /**
+   * Loads the responder needed for `mode` (LLM or Bergamot NMT). Called by
+   * the conversation screen before arming the pipeline. Safe to call
+   * repeatedly — a no-op when the correct model is already loaded.
+   */
+  ensureResponder: (
+    mode: ConversationMode,
+    opts?: ResponderLoadOptions,
+  ) => Promise<void>;
   reset: () => void;
 }
 
@@ -37,7 +53,12 @@ const bootstrap = new AppBootstrap();
 
 function initialServices(): Record<ServiceKind, ServiceStatus> {
   const blank: ServiceStatus = { label: '', phase: 'pending', progress: null };
-  return { stt: { ...blank }, llm: { ...blank }, tts: { ...blank } };
+  return {
+    stt: { ...blank },
+    llm: { ...blank },
+    tts: { ...blank },
+    translator: { ...blank },
+  };
 }
 
 export const useBootstrapStore = create<BootstrapState>((set, get) => ({
@@ -57,8 +78,11 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
       errorMessage: null,
       services: {
         stt: { label: labels.stt, phase: 'pending', progress: null },
+        // llm + translator stay pending — they are loaded lazily when the
+        // user enters a chat of the matching mode.
         llm: { label: labels.llm, phase: 'pending', progress: null },
         tts: { label: labels.tts, phase: 'pending', progress: null },
+        translator: { label: labels.translator, phase: 'pending', progress: null },
       },
     });
 
@@ -90,12 +114,13 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
     };
 
     try {
-      await bootstrap.ensureReady(settings, modelIds, handlers);
+      await bootstrap.ensureAlwaysOn(settings, modelIds, handlers);
 
       const conversationStore = useConversationStore.getState();
-      if (conversationStore.conversations.length === 0) {
-        await conversationStore.createConversation();
-      } else if (!conversationStore.activeConversationId) {
+      if (
+        conversationStore.conversations.length > 0 &&
+        !conversationStore.activeConversationId
+      ) {
         const first = conversationStore.conversations[0];
         if (first) await conversationStore.selectConversation(first.id);
       }
@@ -107,6 +132,40 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
         errorMessage: err instanceof Error ? err.message : String(err),
       });
     }
+  },
+
+  ensureResponder: async (mode, opts = {}) => {
+    const settings = useSettingsStore.getState().settings;
+    const modelIds = useSettingsStore.getState().modelIds;
+
+    const handlers: BootstrapHandlers = {
+      onServiceStart: (kind, label) => {
+        set((s) => ({
+          services: {
+            ...s.services,
+            [kind]: { ...s.services[kind], label, phase: 'active' },
+          },
+        }));
+      },
+      onServiceProgress: (kind, progress) => {
+        set((s) => ({
+          services: {
+            ...s.services,
+            [kind]: { ...s.services[kind], progress },
+          },
+        }));
+      },
+      onServiceDone: (kind) => {
+        set((s) => ({
+          services: {
+            ...s.services,
+            [kind]: { ...s.services[kind], phase: 'done' },
+          },
+        }));
+      },
+    };
+
+    await bootstrap.ensureResponderReady(mode, settings, modelIds, opts, handlers);
   },
 
   reset: () => set({

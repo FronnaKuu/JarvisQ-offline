@@ -12,7 +12,7 @@ import type { IAudioRecorder } from '@core/ports/IAudioRecorder';
 import type { IAudioPlayer } from '@core/ports/IAudioPlayer';
 import type {
   ISttService,
-  ILlmService,
+  IResponder,
   ITtsService,
   ConversationMessage,
   TtsRuntimeOptions,
@@ -30,22 +30,31 @@ export interface PipelineCallbacks {
 }
 
 export interface PipelineConfig {
-  systemPrompt?: string;
-  maxTokens?: number;
-  temperature?: number;
   /**
    * 'streaming' — synthesize + speak each clause as soon as it's complete
-   *   (lowest time-to-first-audio, but TTS inference runs while the LLM is
-   *   still decoding and can stall token delivery on weaker devices).
-   * 'buffered' — wait for the full LLM response, then synthesize once.
+   *   (lowest time-to-first-audio, but TTS inference runs while the responder
+   *   is still decoding and can stall token delivery on weaker devices).
+   * 'buffered' — wait for the full response, then synthesize once.
    */
   ttsBufferMode?: TtsBufferMode;
   ttsOptions?: TtsRuntimeOptions;
+  /**
+   * When true, the listen loop re-arms the microphone automatically after
+   * the assistant finishes speaking (hands-free chaining). Default false —
+   * push-to-talk — because Android devices without hardware AEC can capture
+   * the TTS tail and self-trigger a new turn.
+   */
+  handsFreeMode?: boolean;
 }
 
 export interface PipelineServices {
   stt: ISttService;
-  llm: ILlmService;
+  /**
+   * Mode-agnostic response provider. LlmResponder for chat mode,
+   * TranslationResponder for translation mode. The pipeline never branches
+   * on mode — it just asks the responder for a reply.
+   */
+  responder: IResponder;
   tts: ITtsService;
 }
 
@@ -61,19 +70,18 @@ export class VoicePipeline {
   private ttsAborted = false;
   private isDraining = false;
   private muteTts = false;
-  // Push-to-talk by default: the mic does NOT re-open automatically after the
-  // assistant finishes speaking. Hands-free chaining caused the microphone to
-  // capture the tail of the device's own TTS output (no hardware AEC on most
-  // Android phones with expo-av's MIC audio source), producing self-triggered
-  // turns ("responds to itself"). Users re-arm listening explicitly via the
-  // mic button, which is the standard on-device voice-assistant UX.
+  // Push-to-talk by default. Hands-free chaining reopens the microphone
+  // shortly after TTS ends; on devices without hardware AEC (most Android
+  // phones using expo-av's MIC source) this captures the decaying speaker
+  // output and feeds it back as a new user turn. Toggle at runtime through
+  // `config.handsFreeMode` (see updateConfig) so users can opt in.
   private autoLoop = false;
   private history: ConversationMessage[] = [];
 
   private readonly recorder: IAudioRecorder;
   private readonly audioPlayer: IAudioPlayer;
   private readonly stt: ISttService;
-  private readonly llm: ILlmService;
+  private readonly responder: IResponder;
   private readonly tts: ITtsService;
   private readonly callbacks: PipelineCallbacks;
   private config: PipelineConfig;
@@ -84,16 +92,22 @@ export class VoicePipeline {
     config: PipelineConfig = {},
   ) {
     this.stt = deps.services.stt;
-    this.llm = deps.services.llm;
+    this.responder = deps.services.responder;
     this.tts = deps.services.tts;
     this.recorder = deps.recorder;
     this.audioPlayer = deps.audioPlayer;
     this.callbacks = callbacks;
     this.config = config;
+    if (config.handsFreeMode !== undefined) {
+      this.autoLoop = config.handsFreeMode;
+    }
   }
 
   updateConfig(config: Partial<PipelineConfig>): void {
     this.config = { ...this.config, ...config };
+    if (config.handsFreeMode !== undefined) {
+      this.autoLoop = config.handsFreeMode;
+    }
   }
 
   clearHistory(): void {
@@ -205,24 +219,18 @@ export class VoicePipeline {
     this.audioPlayer.reset();
     this.isDraining = false;
 
-    const messages: ConversationMessage[] = [];
-    if (this.config.systemPrompt) {
-      messages.push({ role: 'system', content: this.config.systemPrompt });
-    }
-    messages.push(...this.history, { role: 'user', content: userText });
-
     let fullResponse = '';
-    let llmDone = false;
+    let responderDone = false;
     const clauses: string[] = [];
     let ttsStarted = false;
     let tokenCount = 0;
 
     const perfStart = await captureSnapshot();
     logLlmStart(perfStart);
-    const llmStartMs = Date.now();
+    const startMs = Date.now();
 
     const onQueueEmpty = () => {
-      if (llmDone) this.onSpeakingDone(userText, fullResponse);
+      if (responderDone) this.onSpeakingDone(userText, fullResponse);
     };
 
     const isBuffered =
@@ -239,7 +247,7 @@ export class VoicePipeline {
     });
 
     try {
-      await this.llm.generate(messages, (token) => {
+      await this.responder.respond(userText, this.history, (token) => {
         if (this.isCancelled) return;
         tokenCount++;
         fullResponse += token;
@@ -248,18 +256,18 @@ export class VoicePipeline {
       });
     } catch (err) {
       this.callbacks.onError(
-        err instanceof Error ? err.message : 'LLM generation failed',
+        err instanceof Error ? err.message : 'Response generation failed',
       );
       this.setPhase('IDLE');
       return;
     }
 
-    const durationMs = Date.now() - llmStartMs;
+    const durationMs = Date.now() - startMs;
     const perfEnd = await captureSnapshot();
     logLlmDone(perfStart, perfEnd, durationMs, tokenCount);
 
     streamer.flush();
-    llmDone = true;
+    responderDone = true;
     this.callbacks.onLlmDone(fullResponse);
 
     if (this.muteTts) {
@@ -339,7 +347,7 @@ export class VoicePipeline {
 
     setTimeout(() => {
       if (!this.isCancelled) void this.listen();
-    }, AppConfig.pipeline.postSpeakingDelayMs);
+    }, AppConfig.pipeline.handsFreePostSpeakingDelayMs);
   }
 
   // ---- Helpers -----------------------------------------------------------
@@ -348,7 +356,7 @@ export class VoicePipeline {
     this.ttsAborted = true;
     void this.audioPlayer.stop().catch(() => {});
     void this.tts.stop().catch(() => {});
-    this.llm.cancelGeneration();
+    this.responder.cancel();
   }
 
   private setPhase(phase: PipelinePhase): void {

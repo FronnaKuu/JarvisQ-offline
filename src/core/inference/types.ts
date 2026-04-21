@@ -36,6 +36,47 @@ export interface ILlmService {
   cancelGeneration(): void;
 }
 
+// ─── Translator (NMT) ────────────────────────────────────────────────────────
+
+export interface ITranslatorService {
+  readonly isLoaded: boolean;
+  /** Direction the currently loaded model covers, or null when unloaded. */
+  readonly direction: { from: string; to: string } | null;
+  /**
+   * Translates a full sentence/utterance. Streams target-language tokens via
+   * onToken (Bergamot emits them in bursts rather than char-by-char). Returns
+   * the final translation.
+   */
+  translate(
+    text: string,
+    onToken: (token: string) => void,
+  ): Promise<string>;
+  /** Cancels an in-flight translation. */
+  cancel(): void;
+}
+
+// ─── Responder ───────────────────────────────────────────────────────────────
+// Unified abstraction the VoicePipeline talks to. Both the LLM and the NMT
+// translator implement it, so the pipeline itself stays mode-agnostic.
+
+export interface IResponder {
+  /** Stable identifier of the responder kind, for logging. */
+  readonly kind: 'llm' | 'translation';
+  /**
+   * Produces a response to the user's utterance. For chat mode this is the
+   * assistant turn; for translation mode this is the translated sentence.
+   * History is provided so LLM responders can use it; stateless responders
+   * (Bergamot NMT) ignore it.
+   */
+  respond(
+    userText: string,
+    history: ConversationMessage[],
+    onToken: (token: string) => void,
+  ): Promise<string>;
+  /** Cancels an in-flight respond() call. */
+  cancel(): void;
+}
+
 // ─── TTS ─────────────────────────────────────────────────────────────────────
 
 import type { IAudioPlayer } from '@core/ports/IAudioPlayer';

@@ -13,9 +13,18 @@ export interface Message {
   isStreaming: boolean;
 }
 
+/**
+ * Two top-level UX modes; the user picks one when creating a chat.
+ *   'conversation' — free-form assistant dialogue backed by the LLM.
+ *   'translation'  — stateless NMT between two locked languages (Bergamot).
+ * Persisted on every conversation so existing chats keep their mode forever.
+ */
+export type ConversationMode = 'conversation' | 'translation';
+
 export interface Conversation {
   id: string;
   title: string;
+  mode: ConversationMode;
   createdAt: number;
   lastUpdatedAt: number;
   systemPrompt: string;
@@ -23,6 +32,10 @@ export interface Conversation {
   temperature: number;
   ttsSpeed: number;
   maxResponseTokens: number;
+  /** BCP-47 language code for translation chats; null for conversation mode. */
+  sourceLang: string | null;
+  /** BCP-47 language code for translation chats; null for conversation mode. */
+  targetLang: string | null;
 }
 
 export type PipelinePhase = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
@@ -62,6 +75,13 @@ export interface ModelProgressUpdate {
 export type TtsEngineId = 'supertonic' | 'system';
 export type TtsBufferMode = 'streaming' | 'buffered';
 
+/**
+ * Engine for translation chats. 'nmt' uses Bergamot (fast, small models, fixed
+ * language pairs); 'llm' reuses the main LLM with a translation prompt and
+ * covers any pair but is an order of magnitude slower.
+ */
+export type TranslationEngine = 'nmt' | 'llm';
+
 export interface AppSettings {
   sttLanguage: string;
   llmSystemPrompt: string;
@@ -74,4 +94,14 @@ export interface AppSettings {
   ttsBufferMode: TtsBufferMode;
   ttsSystemLanguage: string;
   useGpu: boolean;
+  // When true, the pipeline re-opens the microphone automatically after the
+  // assistant finishes speaking (hands-free chaining). Off by default because
+  // devices without hardware AEC can capture the decaying TTS output and
+  // self-trigger a new turn.
+  handsFreeMode: boolean;
+  // ─── Translation defaults (used when the user creates a new translation
+  //     chat; each conversation can override them afterwards) ──────────────
+  translationEngine: TranslationEngine;
+  translationSourceLang: string;
+  translationTargetLang: string;
 }

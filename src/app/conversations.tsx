@@ -24,7 +24,6 @@ export default function ConversationsListScreen() {
   const router = useRouter();
   const conversations = useConversationStore((s) => s.conversations);
   const selectConversation = useConversationStore((s) => s.selectConversation);
-  const createConversation = useConversationStore((s) => s.createConversation);
   const deleteConversation = useConversationStore((s) => s.deleteConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
 
@@ -39,10 +38,11 @@ export default function ConversationsListScreen() {
     [router, selectConversation],
   );
 
-  const handleNew = useCallback(async () => {
-    await createConversation();
-    router.replace('/conversation');
-  }, [createConversation, router]);
+  const handleNew = useCallback(() => {
+    // Route through the mode picker so the user chooses conversation vs
+    // translation (and language pair) before a new chat is persisted.
+    router.push('/mode-picker');
+  }, [router]);
 
   const handleRenameConfirm = useCallback(async () => {
     if (!renameTarget) return;
@@ -62,7 +62,7 @@ export default function ConversationsListScreen() {
         <IconButton
           icon="plus"
           iconColor={AppTheme.colors.onBackground}
-          onPress={() => void handleNew()}
+          onPress={handleNew}
           accessibilityLabel="New conversation"
         />
       </Appbar.Header>
