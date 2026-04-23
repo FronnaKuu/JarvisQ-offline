@@ -1,7 +1,7 @@
 // ---- Mode Picker Screen ---------------------------------------------------
 // First-launch entry AND "+" new-chat entry: the user chooses between a free-
 // form LLM conversation or a Bergamot translation session. Translation mode
-// also picks source/target languages from AppConfig.translation.supportedPairs.
+// also picks source/target languages from the Bergamot catalog in ModelConfig.
 //
 // The chosen mode is persisted on the conversation row, so each chat keeps
 // its mode forever regardless of later setting changes.
@@ -9,9 +9,13 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Appbar, Button, Chip, Text } from 'react-native-paper';
+import { Appbar, Button, Menu, Text } from 'react-native-paper';
 import { useRouter } from 'expo-router';
-import { AppConfig } from '@core/config/AppConfig';
+import {
+  BERGAMOT_SOURCE_LANGS,
+  BERGAMOT_TARGET_LANGS,
+  resolveTranslatorPair,
+} from '@core/config/ModelConfig';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useConversationStore } from '@domain/ConversationStore';
 import { useSettingsStore } from '@domain/SettingsStore';
@@ -20,6 +24,20 @@ import { AppTheme } from '@ui/theme/theme';
 
 type Selection = 'conversation' | 'translation';
 
+// Intl.DisplayNames is available in Hermes since RN 0.73; falls back to the
+// bare code if the runtime doesn't support it.
+function makeLangLabeler(): (code: string) => string {
+  try {
+    const dn = new Intl.DisplayNames(['en'], { type: 'language' });
+    return (code) => {
+      const name = dn.of(code);
+      return name && name !== code ? `${name} (${code.toUpperCase()})` : code.toUpperCase();
+    };
+  } catch {
+    return (code) => code.toUpperCase();
+  }
+}
+
 export default function ModePickerScreen() {
   const router = useRouter();
   const createConversation = useConversationStore((s) => s.createConversation);
@@ -27,47 +45,65 @@ export default function ModePickerScreen() {
   const settings = useSettingsStore((s) => s.settings);
 
   const [selection, setSelection] = useState<Selection>('conversation');
-  const [pair, setPair] = useState<string>(
-    `${settings.translationSourceLang}-${settings.translationTargetLang}`,
-  );
+  const [fromLang, setFromLang] = useState<string>(settings.translationSourceLang);
+  const [toLang, setToLang] = useState<string>(settings.translationTargetLang);
+  const [fromMenuOpen, setFromMenuOpen] = useState(false);
+  const [toMenuOpen, setToMenuOpen] = useState(false);
   const [starting, setStarting] = useState(false);
 
-  const supportedPairs = AppConfig.translation.supportedPairs;
+  const langLabel = useMemo(makeLangLabeler, []);
 
-  const pairOptions = useMemo(
+  const sortedSources = useMemo(
     () =>
-      supportedPairs.map((p) => {
-        const [from, to] = p.split('-');
-        return { id: p, label: `${(from ?? '').toUpperCase()} → ${(to ?? '').toUpperCase()}` };
-      }),
-    [supportedPairs],
+      [...BERGAMOT_SOURCE_LANGS].sort((a, b) =>
+        langLabel(a).localeCompare(langLabel(b)),
+      ),
+    [langLabel],
+  );
+  const sortedTargets = useMemo(
+    () =>
+      [...BERGAMOT_TARGET_LANGS].sort((a, b) =>
+        langLabel(a).localeCompare(langLabel(b)),
+      ),
+    [langLabel],
   );
 
+  const resolution = useMemo(
+    () => resolveTranslatorPair(fromLang, toLang),
+    [fromLang, toLang],
+  );
+
+  const routeHint =
+    resolution.kind === 'direct'
+      ? 'Direct model (~30 MB)'
+      : resolution.kind === 'pivot'
+        ? `Via English (2 models, ~60 MB)`
+        : fromLang === toLang
+          ? 'Source and target must differ'
+          : 'Unsupported — this target has no English→X model';
+
+  const canStart =
+    selection === 'conversation' || resolution.kind !== 'unsupported';
+
   const handleStart = useCallback(async () => {
-    if (starting) return;
+    if (starting || !canStart) return;
     setStarting(true);
     try {
       const mode: ConversationMode = selection;
       let sourceLang: string | null = null;
       let targetLang: string | null = null;
       if (mode === 'translation') {
-        const [from, to] = pair.split('-');
-        sourceLang = from ?? null;
-        targetLang = to ?? null;
+        sourceLang = fromLang;
+        targetLang = toLang;
       }
 
-      // Load the matching responder before creating the chat, so the user
-      // never lands on a conversation screen that cannot respond. Download
-      // progress is surfaced by the bootstrap store in the splash UI if this
-      // is the first time for the given mode/pair.
       await ensureResponder(mode, { sourceLang, targetLang });
-
       await createConversation(mode, { sourceLang, targetLang });
       router.replace('/conversation');
     } finally {
       setStarting(false);
     }
-  }, [selection, pair, createConversation, ensureResponder, router, starting]);
+  }, [selection, fromLang, toLang, canStart, createConversation, ensureResponder, router, starting]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
@@ -99,20 +135,45 @@ export default function ModePickerScreen() {
         {selection === 'translation' ? (
           <View style={styles.pairBlock}>
             <Text variant="labelLarge" style={styles.pairLabel}>
-              Language pair
+              Languages
             </Text>
-            <View style={styles.pairRow}>
-              {pairOptions.map((opt) => (
-                <Chip
-                  key={opt.id}
-                  selected={pair === opt.id}
-                  onPress={() => setPair(opt.id)}
-                  style={styles.chip}
-                >
-                  {opt.label}
-                </Chip>
-              ))}
+            <View style={styles.langRow}>
+              <LangPicker
+                label="From"
+                value={fromLang}
+                options={sortedSources}
+                labelFor={langLabel}
+                open={fromMenuOpen}
+                onOpen={() => setFromMenuOpen(true)}
+                onDismiss={() => setFromMenuOpen(false)}
+                onPick={(code) => {
+                  setFromLang(code);
+                  setFromMenuOpen(false);
+                }}
+              />
+              <LangPicker
+                label="To"
+                value={toLang}
+                options={sortedTargets}
+                labelFor={langLabel}
+                open={toMenuOpen}
+                onOpen={() => setToMenuOpen(true)}
+                onDismiss={() => setToMenuOpen(false)}
+                onPick={(code) => {
+                  setToLang(code);
+                  setToMenuOpen(false);
+                }}
+              />
             </View>
+            <Text
+              variant="bodySmall"
+              style={[
+                styles.routeHint,
+                resolution.kind === 'unsupported' && styles.routeHintError,
+              ]}
+            >
+              {routeHint}
+            </Text>
           </View>
         ) : null}
 
@@ -121,13 +182,68 @@ export default function ModePickerScreen() {
           style={styles.cta}
           contentStyle={styles.ctaContent}
           loading={starting}
-          disabled={starting}
+          disabled={starting || !canStart}
           onPress={() => void handleStart()}
         >
           Start
         </Button>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function LangPicker({
+  label,
+  value,
+  options,
+  labelFor,
+  open,
+  onOpen,
+  onDismiss,
+  onPick,
+}: {
+  label: string;
+  value: string;
+  options: ReadonlyArray<string>;
+  labelFor: (code: string) => string;
+  open: boolean;
+  onOpen: () => void;
+  onDismiss: () => void;
+  onPick: (code: string) => void;
+}) {
+  return (
+    <View style={styles.langCol}>
+      <Text variant="labelSmall" style={styles.langLabel}>
+        {label}
+      </Text>
+      <Menu
+        visible={open}
+        onDismiss={onDismiss}
+        anchor={
+          <Pressable
+            onPress={onOpen}
+            android_ripple={{ color: AppTheme.colors.surfaceVariant }}
+            style={styles.langButton}
+          >
+            <Text variant="bodyMedium" style={styles.langButtonText} numberOfLines={1}>
+              {labelFor(value)}
+            </Text>
+          </Pressable>
+        }
+        contentStyle={styles.menuContent}
+      >
+        <ScrollView style={styles.menuScroll}>
+          {options.map((code) => (
+            <Menu.Item
+              key={code}
+              onPress={() => onPick(code)}
+              title={labelFor(code)}
+              titleStyle={code === value ? styles.menuItemActive : undefined}
+            />
+          ))}
+        </ScrollView>
+      </Menu>
+    </View>
   );
 }
 
@@ -204,13 +320,43 @@ const styles = StyleSheet.create({
   pairLabel: {
     color: AppTheme.colors.onBackground,
   },
-  pairRow: {
+  langRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    gap: AppTheme.spacing.md,
+  },
+  langCol: {
+    flex: 1,
     gap: AppTheme.spacing.xs,
   },
-  chip: {
+  langLabel: {
+    color: AppTheme.colors.outline,
+  },
+  langButton: {
+    padding: AppTheme.spacing.md,
     backgroundColor: AppTheme.colors.surface,
+    borderRadius: AppTheme.radius.md,
+    borderWidth: 1,
+    borderColor: AppTheme.colors.outline,
+  },
+  langButtonText: {
+    color: AppTheme.colors.onBackground,
+  },
+  menuContent: {
+    backgroundColor: AppTheme.colors.surface,
+    maxHeight: 360,
+  },
+  menuScroll: {
+    maxHeight: 360,
+  },
+  menuItemActive: {
+    color: AppTheme.colors.primary,
+    fontWeight: '700',
+  },
+  routeHint: {
+    color: AppTheme.colors.outline,
+  },
+  routeHintError: {
+    color: AppTheme.colors.error,
   },
   cta: {
     marginTop: AppTheme.spacing.md,

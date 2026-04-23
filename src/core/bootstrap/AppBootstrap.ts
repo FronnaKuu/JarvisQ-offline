@@ -17,11 +17,10 @@ import {
   STT_PROFILES,
   LLM_PROFILES,
   TTS_PROFILES,
-  TRANSLATOR_PROFILES,
   DEFAULT_STT_PROFILE_ID,
   DEFAULT_LLM_PROFILE_ID,
   DEFAULT_TTS_PROFILE_ID,
-  getTranslatorProfileId,
+  resolveTranslatorPair,
 } from '@core/config/ModelConfig';
 import { SttService } from '@core/inference/SttService';
 import { LlmService } from '@core/inference/LlmService';
@@ -141,14 +140,14 @@ export class AppBootstrap {
       return;
     }
 
-    // Translation mode — resolve the Bergamot pair profile.
+    // Translation mode — route the (from, to) pair to a direct Bergamot model
+    // or a two-leg pivot through English.
     const from = opts.sourceLang ?? settings.translationSourceLang;
     const to = opts.targetLang ?? settings.translationTargetLang;
-    const pairId = getTranslatorProfileId(from, to);
-    const profile = TRANSLATOR_PROFILES[pairId];
-    if (!profile) {
+    const resolved = resolveTranslatorPair(from, to);
+    if (resolved.kind === 'unsupported') {
       throw new Error(
-        `No Bergamot translator profile for pair ${pairId}. See AppConfig.translation.supportedPairs.`,
+        `No Bergamot translation route from "${from}" to "${to}". Some languages (be, bs, mt, nb, nn, sr, vi) have no EN→X model and cannot be used as target.`,
       );
     }
 
@@ -162,10 +161,36 @@ export class AppBootstrap {
       return;
     }
 
-    handlers.onServiceStart?.('translator', profile.label);
-    await TranslatorService.load(
-      profile.buildLoadConfig(settings.useGpu),
-      (p) => handlers.onServiceProgress?.('translator', toSnapshot(p)),
+    const label =
+      resolved.kind === 'direct'
+        ? resolved.profile.label
+        : `Bergamot ${from.toUpperCase()}→EN→${to.toUpperCase()} (pivot, ~60 MB)`;
+    handlers.onServiceStart?.('translator', label);
+
+    const loadConfig =
+      resolved.kind === 'direct'
+        ? resolved.profile.buildLoadConfig(settings.useGpu)
+        : {
+            engine: 'bergamot-pivot' as const,
+            from,
+            to,
+            useGpu: settings.useGpu,
+            leg1: {
+              modelConstant: resolved.leg1.modelConstant,
+              from: resolved.leg1.from,
+              to: resolved.leg1.to,
+              useGpu: settings.useGpu,
+            },
+            leg2: {
+              modelConstant: resolved.leg2.modelConstant,
+              from: resolved.leg2.from,
+              to: resolved.leg2.to,
+              useGpu: settings.useGpu,
+            },
+          };
+
+    await TranslatorService.load(loadConfig, (p) =>
+      handlers.onServiceProgress?.('translator', toSnapshot(p)),
     );
     handlers.onServiceDone?.('translator');
   }

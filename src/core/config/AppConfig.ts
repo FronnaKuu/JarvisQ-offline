@@ -118,24 +118,15 @@ export const AppConfig = {
     maxContextTurns: 10,
   },
 
-  // Translation mode defaults and supported NMT pairs. The supported pairs
-  // list is authoritative — the mode-picker UI and the translator loader both
-  // read it, so adding a new Bergamot pair here is enough to surface it in
-  // the UI and trigger on-demand download.
+  // Translation mode defaults. The authoritative language catalog lives in
+  // ModelConfig (BERGAMOT_LANG_MAP) — see resolveTranslatorPair() for the
+  // direct/pivot routing. Adding a new Bergamot pair only requires one line
+  // in that map.
   translation: {
     defaultMode: 'conversation' as const,
     defaultEngine: 'nmt' as const,
     defaultSourceLang: 'en',
     defaultTargetLang: 'it',
-    // BCP-47 pair ids (source-target). Must match the keys of
-    // TRANSLATOR_PROFILES in ModelConfig.
-    supportedPairs: [
-      'en-it', 'it-en',
-      'en-es', 'es-en',
-      'en-fr', 'fr-en',
-      'en-de', 'de-en',
-      'en-pt', 'pt-en',
-    ] as const,
     // Default LLM prompt prefix when translationEngine = 'llm'. The target
     // language is appended at call time so the same template works for any
     // pair without branching.
