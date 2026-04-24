@@ -45,6 +45,15 @@ export interface PipelineConfig {
    * the TTS tail and self-trigger a new turn.
    */
   handsFreeMode?: boolean;
+  /**
+   * When true, LISTEN bypasses the file-based recorder+transcribeFile path
+   * and streams PCM directly into stt.transcribeLive() — the parakeet
+   * addon's Silero VAD segments the input and emits per-segment partial
+   * transcripts as the user speaks. Requires a parakeet profile with
+   * vadModelSrc (AppConfig.stt.parakeetStreamingEnabled) and a live
+   * recorder factory on the pipeline deps.
+   */
+  dictationMode?: boolean;
 }
 
 export interface PipelineServices {
@@ -58,10 +67,25 @@ export interface PipelineServices {
   tts: ITtsService;
 }
 
+/**
+ * Factory for the PCM-streaming recorder used by dictation mode. Kept as
+ * an optional factory (not a singleton) because each dictation session
+ * needs a freshly initialised mic pipeline. The return type is loose so
+ * we don't leak the react-native-live-audio-stream dependency into
+ * pipeline core.
+ */
+export interface LiveRecorderHandle {
+  chunks(): AsyncIterable<Uint8Array>;
+  stop(): Promise<void>;
+}
+export type LiveRecorderFactory = () => Promise<LiveRecorderHandle>;
+
 export interface PipelineDeps {
   services: PipelineServices;
   recorder: IAudioRecorder;
   audioPlayer: IAudioPlayer;
+  /** Optional — only required when PipelineConfig.dictationMode is true. */
+  liveRecorder?: LiveRecorderFactory;
 }
 
 export class VoicePipeline {
@@ -81,6 +105,8 @@ export class VoicePipeline {
 
   private readonly recorder: IAudioRecorder;
   private readonly audioPlayer: IAudioPlayer;
+  private readonly liveRecorderFactory?: LiveRecorderFactory;
+  private liveRecorderHandle: LiveRecorderHandle | null = null;
   private readonly stt: ISttService;
   private readonly responder: IResponder;
   private readonly tts: ITtsService;
@@ -97,6 +123,7 @@ export class VoicePipeline {
     this.tts = deps.services.tts;
     this.recorder = deps.recorder;
     this.audioPlayer = deps.audioPlayer;
+    this.liveRecorderFactory = deps.liveRecorder;
     this.callbacks = callbacks;
     this.config = config;
     if (config.handsFreeMode !== undefined) {
@@ -135,6 +162,13 @@ export class VoicePipeline {
 
   async stopListening(): Promise<void> {
     this.isCancelled = true;
+    if (this.liveRecorderHandle) {
+      // Stopping the live recorder terminates the PCM AsyncIterable, which
+      // in turn ends the SDK transcribeStream session. transcribeLive then
+      // resolves naturally — we don't need to abort it forcefully.
+      await this.liveRecorderHandle.stop();
+      this.liveRecorderHandle = null;
+    }
     await this.recorder.abort();
     this.abortTts();
     this.setPhase('IDLE');
@@ -173,6 +207,11 @@ export class VoicePipeline {
   private async listen(): Promise<void> {
     this.setPhase('LISTENING');
 
+    if (this.config.dictationMode && this.liveRecorderFactory) {
+      await this.listenDictation();
+      return;
+    }
+
     const result = await this.recorder.record();
 
     if (this.isCancelled) return;
@@ -193,6 +232,61 @@ export class VoicePipeline {
     }
 
     await this.transcribe(result.uri);
+  }
+
+  /**
+   * Dictation path: streams PCM from the live recorder straight into the
+   * parakeet addon's VAD-driven streaming recognizer. Per-segment partials
+   * surface via onSttPartial as the user speaks. The accumulated transcript
+   * is used as the user's final turn after stopListening() is called.
+   */
+  private async listenDictation(): Promise<void> {
+    if (!this.liveRecorderFactory) {
+      this.callbacks.onError('Dictation mode requires a live recorder');
+      this.setPhase('IDLE');
+      return;
+    }
+
+    let handle: LiveRecorderHandle;
+    try {
+      handle = await this.liveRecorderFactory();
+    } catch (err) {
+      this.callbacks.onError(
+        err instanceof Error ? err.message : 'Failed to start live recorder',
+      );
+      this.setPhase('IDLE');
+      return;
+    }
+    this.liveRecorderHandle = handle;
+
+    let finalText = '';
+    try {
+      finalText = await this.stt.transcribeLive(handle.chunks(), (segment) => {
+        if (!this.isCancelled) this.callbacks.onSttPartial(segment);
+      });
+    } catch (err) {
+      this.callbacks.onError(
+        err instanceof Error ? err.message : 'Live transcription failed',
+      );
+      this.liveRecorderHandle = null;
+      this.setPhase('IDLE');
+      return;
+    }
+    this.liveRecorderHandle = null;
+
+    if (this.isCancelled) {
+      this.setPhase('IDLE');
+      return;
+    }
+
+    const trimmed = finalText.trim();
+    if (!trimmed) {
+      this.setPhase('IDLE');
+      return;
+    }
+
+    this.callbacks.onSttFinal(trimmed);
+    await this.generate(trimmed);
   }
 
   // ---- Transcribe phase --------------------------------------------------
@@ -334,6 +428,11 @@ export class VoicePipeline {
       while (!this.ttsAborted) {
         const clause = queue.shift();
         if (!clause) {
+          // With pipelined playback, `speak` returns after queueing the
+          // clause rather than waiting for its audio to finish. Drain the
+          // player so the "speaking done" signal only fires after the
+          // last clause has actually finished playing.
+          await this.audioPlayer.drain();
           onEmpty();
           break;
         }

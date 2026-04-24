@@ -25,6 +25,7 @@ import { TranslatorService } from '@core/inference/TranslatorService';
 import { TtsService } from '@core/inference/TtsService';
 import { SystemTtsService } from '@platform/mobile/SystemTtsService';
 import { Platform } from '@platform/mobile/Platform';
+import { AppConfig } from '@core/config/AppConfig';
 import { useConversationStore } from '@domain/ConversationStore';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
@@ -105,6 +106,7 @@ export default function ConversationScreen() {
         services: { stt: SttService, responder, tts },
         recorder,
         audioPlayer,
+        liveRecorder: Platform.createLiveRecorder(),
       },
       {
         onPhaseChange: (p) => {
@@ -150,6 +152,11 @@ export default function ConversationScreen() {
         // not by settings — starting a voice session enables auto-rearm,
         // explicit stop or hard-mute disables it.
         handsFreeMode: false,
+        // Dictation mode routes LISTEN through the parakeet addon's live
+        // Silero-VAD streaming path. Gated on the same flag that wires
+        // vadModelSrc into the model config — off for whisper and any
+        // parakeet build where the new .bare isn't deployed.
+        dictationMode: AppConfig.stt.parakeetStreamingEnabled,
       },
     );
 

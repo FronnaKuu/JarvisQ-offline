@@ -6,7 +6,7 @@
 // server-side handler detects the format via the file extension and uses
 // FFmpegDecoder to convert it to f32le PCM. Works for Whisper and Parakeet.
 
-import { loadModel, transcribe, unloadModel } from '@qvac/sdk';
+import { loadModel, transcribe, transcribeStream, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 import { loadModelWithFallback } from '@core/utils/loadWithFallback';
 import type { LoadModelArgs } from '@core/utils/loadWithFallback';
@@ -118,11 +118,70 @@ class SttServiceClass implements ISttService {
     return text;
   }
 
+  /**
+   * VAD-driven live transcription — opens a transcribeStream duplex session
+   * against the loaded parakeet model and pumps PCM chunks from `pcmStream`.
+   * Each detected speech segment is yielded via `onSegment` and accumulated
+   * into the returned concatenated text.
+   *
+   * Caller stops the stream by returning from its AsyncIterable (e.g. the
+   * LivePcmRecorder's `chunks()` terminates when its `stop()` is called).
+   */
+  async transcribeLive(
+    pcmStream: AsyncIterable<Uint8Array>,
+    onSegment: (text: string) => void,
+  ): Promise<string> {
+    if (!this.modelId) throw new Error('STT model not loaded');
+
+    const session = await (transcribeStream as unknown as (
+      params: { modelId: string },
+    ) => Promise<TranscribeStreamSession>)({ modelId: this.modelId });
+
+    // Pump PCM chunks into the duplex session in the background. The server
+    // streams partial transcripts back through the session's AsyncIterable,
+    // which we consume synchronously below.
+    const pumpPromise = (async () => {
+      try {
+        for await (const chunk of pcmStream) {
+          session.write(chunk);
+        }
+      } finally {
+        session.end();
+      }
+    })();
+
+    let fullText = '';
+    try {
+      for await (const response of session) {
+        const text = response?.text;
+        if (!text) continue;
+        onSegment(text);
+        fullText += (fullText ? ' ' : '') + text.trim();
+      }
+    } catch (err) {
+      session.destroy?.();
+      throw err;
+    }
+    await pumpPromise;
+    return fullText;
+  }
+
   async unload(): Promise<void> {
     if (!this.modelId) return;
     await unloadModel({ modelId: this.modelId });
     this.modelId = null;
   }
+}
+
+/**
+ * Minimal shape of the duplex session returned by @qvac/sdk transcribeStream
+ * when called without audioChunk. We redeclare it here because the SDK
+ * exposes it as an anonymous inline type.
+ */
+interface TranscribeStreamSession extends AsyncIterable<{ text?: string; done?: boolean }> {
+  write(audioChunk: Uint8Array): void;
+  end(): void;
+  destroy?: () => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

@@ -1,17 +1,22 @@
 // ---- Expo Audio Player (Mobile) ------------------------------------------
 // Implements IAudioPlayer using expo-audio for iOS and Android.
 //
-// Strategy: qvac TTS delivers Float32 PCM chunks per clause.
-//   1. Collect all chunks for one clause
-//   2. Encode as WAV in memory, write to a temp file
-//   3. Feed the file to a single long-lived AudioPlayer via replace()
-//   4. Wait for didJustFinish, then fire-and-forget cleanup of the WAV
+// Playback strategy (pipelined):
+//   - `addChunk` buffers Float32 PCM chunks delivered by the TTS engine.
+//   - `playAndClear` commits the buffered chunks as one clause and CHAINS
+//     its playback onto an internal promise tail. It resolves as soon as
+//     the clause is queued — NOT when audio ends — so the caller (TTS
+//     engine) can immediately start synthesising the next clause while
+//     this one plays. Overlap kills the ~1 s inter-clause gap that made
+//     expo-av's Sound-per-clause approach audible.
+//   - `drain` is awaited by the pipeline before firing "speaking done" so
+//     the last clause's playback completes before the phase transition.
 //
-// Why expo-audio instead of expo-av: expo-av allocates a fresh ExoPlayer +
-// AudioTrack per Sound.createAsync and releases it on unloadAsync — the
-// re-init cycle inserts ~1s of silence between clauses (audible stutter).
-// expo-audio exposes a persistent AudioPlayer whose source can be swapped
-// via replace() without tearing down the underlying native pipeline.
+// Why expo-audio instead of expo-av: expo-av allocated a fresh ExoPlayer
+// per Sound.createAsync and released it on unloadAsync, inserting ~1 s of
+// silence between clauses. expo-audio exposes a persistent AudioPlayer
+// whose source can be swapped via `replace()` without tearing down the
+// underlying native pipeline.
 
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import type { AudioPlayer, AudioStatus } from 'expo-audio';
@@ -28,7 +33,13 @@ export class ExpoAudioPlayer implements IAudioPlayer {
   private sampleRate = 44100;
   private player: AudioPlayer | null = null;
   private audioModeConfigured = false;
-  private pendingTempUri: string | null = null;
+  /**
+   * Promise chain of queued playbacks. Each `playAndClear` call appends a
+   * `.then()` that awaits the previous clause's playback before swapping
+   * the player's source and kicking off the new one. Starts as a resolved
+   * promise so the first clause's playback runs immediately.
+   */
+  private playbackTail: Promise<void> = Promise.resolve();
   private stopped = false;
 
   addChunk(pcm: Float32Array, sampleRate: number): void {
@@ -38,50 +49,59 @@ export class ExpoAudioPlayer implements IAudioPlayer {
 
   async playAndClear(): Promise<void> {
     if (this.chunks.length === 0) return;
+    if (this.stopped) {
+      this.chunks = [];
+      return;
+    }
 
     const merged = this.mergeChunks();
     this.chunks = [];
+    const sampleRate = this.sampleRate;
 
-    const leadSamples = Math.round((LEAD_IN_MS / 1000) * this.sampleRate);
+    const leadSamples = Math.round((LEAD_IN_MS / 1000) * sampleRate);
     const padded = new Float32Array(leadSamples + merged.length);
     padded.set(merged, leadSamples);
-    const wav = encodeWav(padded, this.sampleRate);
+    const wav = encodeWav(padded, sampleRate);
     const b64 = wavToBase64(wav);
 
-    const tempUri = `${FileSystem.cacheDirectory ?? ''}${TEMP_PREFIX}${Date.now()}.wav`;
-    await FileSystem.writeAsStringAsync(tempUri, b64, {
+    const tempUri = `${FileSystem.cacheDirectory ?? ''}${TEMP_PREFIX}${Date.now()}_${Math.floor(Math.random() * 1e6)}.wav`;
+
+    // Writing the WAV to disk is synchronous-ish but on RN's JS thread —
+    // kicking it off here means the file is ready by the time the
+    // playback tail wants to swap sources.
+    const writePromise = FileSystem.writeAsStringAsync(tempUri, b64, {
       encoding: FileSystem.EncodingType.Base64,
     });
 
-    if (this.stopped) {
-      void this.deleteFile(tempUri);
-      return;
-    }
+    const durationMs = (padded.length / sampleRate) * 1000 + 1000;
 
-    await this.ensureAudioMode();
-    const player = this.ensurePlayer();
+    this.playbackTail = this.playbackTail
+      .catch(() => {
+        // Swallow prior-clause errors so one failed clause can't break
+        // the whole queue — log via console so the issue is debuggable.
+      })
+      .then(async () => {
+        await writePromise;
+        if (this.stopped) {
+          void this.deleteFile(tempUri);
+          return;
+        }
+        await this.ensureAudioMode();
+        const player = this.ensurePlayer();
+        try {
+          player.replace({ uri: tempUri });
+          player.play();
+          await this.waitForFinish(player, durationMs);
+        } finally {
+          void this.deleteFile(tempUri);
+        }
+      });
 
-    // Swap source without destroying the native pipeline — this is the
-    // difference from expo-av Sound.createAsync/unloadAsync.
-    player.replace({ uri: tempUri });
+    // Resolve immediately — caller can start synthesising the next clause.
+  }
 
-    // Cleanup previous clause's file now that the player has moved on.
-    const previousUri = this.pendingTempUri;
-    this.pendingTempUri = tempUri;
-    if (previousUri) {
-      void this.deleteFile(previousUri);
-    }
-
-    if (this.stopped) {
-      return;
-    }
-
-    player.play();
-
-    // Wait for didJustFinish. Safety net: hard timeout of clipDuration + 1s
-    // so a missed event doesn't deadlock the drain.
-    const durationMs = (padded.length / this.sampleRate) * 1000 + 1000;
-    await this.waitForFinish(player, durationMs);
+  async drain(): Promise<void> {
+    await this.playbackTail.catch(() => {});
   }
 
   async stop(): Promise<void> {
@@ -94,24 +114,24 @@ export class ExpoAudioPlayer implements IAudioPlayer {
         // ignore — player may already be idle
       }
     }
-    if (this.pendingTempUri) {
-      const uri = this.pendingTempUri;
-      this.pendingTempUri = null;
-      void this.deleteFile(uri);
-    }
+    // Best-effort drain so pending file writes finish cleanup before we
+    // move on. Don't await too long — a malfunctioning player could hang.
+    await Promise.race([
+      this.playbackTail.catch(() => {}),
+      new Promise<void>((resolve) => setTimeout(resolve, 250)),
+    ]);
   }
 
   reset(): void {
     this.stopped = false;
     this.chunks = [];
+    this.playbackTail = Promise.resolve();
   }
 
   // ---- Private -----------------------------------------------------------
 
   private async ensureAudioMode(): Promise<void> {
     if (this.audioModeConfigured) return;
-    // Called once per player lifetime — expo-av equivalent was invoked per
-    // clause, triggering setMode/setSpeakerphoneOn every playback.
     await setAudioModeAsync({
       allowsRecording: false,
       playsInSilentMode: true,
@@ -122,7 +142,6 @@ export class ExpoAudioPlayer implements IAudioPlayer {
 
   private ensurePlayer(): AudioPlayer {
     if (this.player) return this.player;
-    // Null source is allowed; replace() supplies the first clip.
     this.player = createAudioPlayer(null, { updateInterval: 500 });
     return this.player;
   }

@@ -54,6 +54,12 @@ export class WebAudioPlayer implements IAudioPlayer {
     this.currentSource = null;
   }
 
+  async drain(): Promise<void> {
+    // WebAudio playAndClear already awaits each clause to completion, so
+    // there's nothing extra to await here. Satisfies the IAudioPlayer
+    // contract the pipeline uses.
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     this.chunks = [];

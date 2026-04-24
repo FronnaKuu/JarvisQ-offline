@@ -81,6 +81,12 @@ export class IpcAudioPlayer implements IAudioPlayer {
     }
   }
 
+  async drain(): Promise<void> {
+    // IPC player already awaits each clause's completion inside
+    // playAndClear, so there's nothing extra to wait on here. Kept as a
+    // no-op to satisfy the IAudioPlayer contract the pipeline relies on.
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     this.chunks = [];

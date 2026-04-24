@@ -21,6 +21,21 @@ export interface ISttService {
     uri: string,
     onPartial: (text: string) => void,
   ): Promise<string>;
+
+  /**
+   * Streams a live PCM feed into the parakeet addon's VAD-driven streaming
+   * path. Each detected speech segment emits a transcript via `onSegment`.
+   * The returned controller exposes `stop()` (graceful flush) and the
+   * accumulated transcript is available after stop() resolves.
+   *
+   * Only parakeet is supported at runtime; whisper's streaming API would
+   * require a different wire format. Throws when called on a non-parakeet
+   * or when the loaded parakeet profile lacks vadModelSrc.
+   */
+  transcribeLive(
+    pcmStream: AsyncIterable<Uint8Array>,
+    onSegment: (text: string) => void,
+  ): Promise<string>;
 }
 
 // ─── LLM ─────────────────────────────────────────────────────────────────────
