@@ -72,7 +72,7 @@ index 45b5806..97d40b8 100644
     * Reload the model with new configuration parameters.
     * @param newConfig - New configuration parameters
 diff --git a/node_modules/@qvac/transcription-parakeet/index.js b/node_modules/@qvac/transcription-parakeet/index.js
-index eafe3e1..262b6c2 100644
+index eafe3e1..0ac25ea 100644
 --- a/node_modules/@qvac/transcription-parakeet/index.js
 +++ b/node_modules/@qvac/transcription-parakeet/index.js
 @@ -112,9 +112,12 @@ class TranscriptionParakeet {
@@ -123,7 +123,7 @@ index eafe3e1..262b6c2 100644
    async _withExclusiveRun (fn) {
      const prev = this._runQueueWaiter || Promise.resolve()
      let release
-@@ -257,16 +280,73 @@ class TranscriptionParakeet {
+@@ -257,16 +280,83 @@ class TranscriptionParakeet {
     * @param {AsyncIterable<Buffer>} audioStream - Stream of audio data (16kHz mono, Float32 or s16le)
     * @returns {Promise<QvacResponse>} - Response object for tracking the transcription job
     */
@@ -179,21 +179,31 @@ index eafe3e1..262b6c2 100644
 +
 +  async _handleStreamingAudio (audioStream) {
 +    this.logger.debug('Start handling streaming audio')
-+    for await (const chunk of audioStream) {
-+      let audioData
-+      if (chunk instanceof Float32Array) {
-+        audioData = chunk
-+      } else {
-+        const int16Data = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2)
-+        audioData = new Float32Array(int16Data.length)
-+        for (let i = 0; i < int16Data.length; i++) {
-+          audioData[i] = int16Data[i] / 32768.0
++    try {
++      for await (const chunk of audioStream) {
++        let audioData
++        if (chunk instanceof Float32Array) {
++          audioData = chunk
++        } else {
++          const int16Data = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2)
++          audioData = new Float32Array(int16Data.length)
++          for (let i = 0; i < int16Data.length; i++) {
++            audioData[i] = int16Data[i] / 32768.0
++          }
 +        }
++        this.addon.appendStreamingAudio({ input: audioData })
 +      }
-+      this.addon.appendStreamingAudio({ input: audioData })
++    } finally {
++      // Always close the native streaming session even if the input stream
++      // errors or is destroyed — leaking a streaming session blocks the
++      // next startStreaming call with "Streaming session already active".
++      this.logger.debug('Ending streaming session')
++      try {
++        this.addon.endStreaming()
++      } catch (err) {
++        this.logger.warn('endStreaming failed', err)
++      }
 +    }
-+    this.logger.debug('Ending streaming session')
-+    this.addon.endStreaming()
 +  }
 +
    /**

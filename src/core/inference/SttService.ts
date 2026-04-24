@@ -133,19 +133,35 @@ class SttServiceClass implements ISttService {
   ): Promise<string> {
     if (!this.modelId) throw new Error('STT model not loaded');
 
+    console.log('[transcribeLive] opening duplex session…');
     const session = await (transcribeStream as unknown as (
       params: { modelId: string },
     ) => Promise<TranscribeStreamSession>)({ modelId: this.modelId });
+    console.log('[transcribeLive] duplex session open');
 
+    let chunkCount = 0;
     // Pump PCM chunks into the duplex session in the background. The server
     // streams partial transcripts back through the session's AsyncIterable,
     // which we consume synchronously below.
     const pumpPromise = (async () => {
       try {
         for await (const chunk of pcmStream) {
-          session.write(chunk);
+          try {
+            session.write(chunk);
+            chunkCount++;
+            if (chunkCount === 1 || chunkCount % 25 === 0) {
+              console.log(`[transcribeLive] chunks written=${chunkCount} lastBytes=${chunk.byteLength}`);
+            }
+          } catch (err) {
+            console.error('[transcribeLive] session.write threw', err);
+            throw err;
+          }
         }
+      } catch (err) {
+        console.error('[transcribeLive] pcmStream iteration threw', err);
+        throw err;
       } finally {
+        console.log(`[transcribeLive] stream drained, total chunks=${chunkCount}, calling session.end()`);
         session.end();
       }
     })();
@@ -159,6 +175,7 @@ class SttServiceClass implements ISttService {
         fullText += (fullText ? ' ' : '') + text.trim();
       }
     } catch (err) {
+      console.error('[transcribeLive] session iteration threw', err);
       session.destroy?.();
       throw err;
     }

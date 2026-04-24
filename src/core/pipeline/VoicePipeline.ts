@@ -107,6 +107,13 @@ export class VoicePipeline {
   private readonly audioPlayer: IAudioPlayer;
   private readonly liveRecorderFactory?: LiveRecorderFactory;
   private liveRecorderHandle: LiveRecorderHandle | null = null;
+  /**
+   * Set while listenDictation is active. stopListening awaits this so the
+   * native streaming session has a chance to close on the server before
+   * the next listen turn starts a new one — otherwise the server throws
+   * "Streaming session already active for this instance".
+   */
+  private activeDictationPromise: Promise<void> | null = null;
   private readonly stt: ISttService;
   private readonly responder: IResponder;
   private readonly tts: ITtsService;
@@ -165,12 +172,19 @@ export class VoicePipeline {
     if (this.liveRecorderHandle) {
       // Stopping the live recorder terminates the PCM AsyncIterable, which
       // in turn ends the SDK transcribeStream session. transcribeLive then
-      // resolves naturally — we don't need to abort it forcefully.
+      // resolves naturally.
       await this.liveRecorderHandle.stop();
       this.liveRecorderHandle = null;
     }
     await this.recorder.abort();
     this.abortTts();
+    // Wait for the active dictation turn (if any) to complete — it must
+    // finish closing the server streaming session before we allow a new
+    // listen turn to start, otherwise the native addon rejects the next
+    // startStreaming with "Streaming session already active".
+    if (this.activeDictationPromise) {
+      await this.activeDictationPromise.catch(() => {});
+    }
     this.setPhase('IDLE');
   }
 
@@ -208,7 +222,12 @@ export class VoicePipeline {
     this.setPhase('LISTENING');
 
     if (this.config.dictationMode && this.liveRecorderFactory) {
-      await this.listenDictation();
+      this.activeDictationPromise = this.listenDictation();
+      try {
+        await this.activeDictationPromise;
+      } finally {
+        this.activeDictationPromise = null;
+      }
       return;
     }
 
@@ -247,12 +266,17 @@ export class VoicePipeline {
       return;
     }
 
+    console.log('[dictation] starting live recorder…');
     let handle: LiveRecorderHandle;
     try {
       handle = await this.liveRecorderFactory();
+      console.log('[dictation] live recorder ready');
     } catch (err) {
+      console.error('[dictation] recorder error', err);
       this.callbacks.onError(
-        err instanceof Error ? err.message : 'Failed to start live recorder',
+        err instanceof Error
+          ? `Recorder: ${err.message}\n${err.stack ?? ''}`
+          : 'Failed to start live recorder',
       );
       this.setPhase('IDLE');
       return;
@@ -261,12 +285,18 @@ export class VoicePipeline {
 
     let finalText = '';
     try {
+      console.log('[dictation] opening transcribeStream…');
       finalText = await this.stt.transcribeLive(handle.chunks(), (segment) => {
+        console.log('[dictation] partial segment', segment);
         if (!this.isCancelled) this.callbacks.onSttPartial(segment);
       });
+      console.log('[dictation] stream closed, finalText=', finalText);
     } catch (err) {
+      console.error('[dictation] transcribeLive error', err);
       this.callbacks.onError(
-        err instanceof Error ? err.message : 'Live transcription failed',
+        err instanceof Error
+          ? `Live STT: ${err.message}\n${err.stack ?? ''}`
+          : 'Live transcription failed',
       );
       this.liveRecorderHandle = null;
       this.setPhase('IDLE');

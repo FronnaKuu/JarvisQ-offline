@@ -1,4 +1,4 @@
-From 3db369cb4ae5c72b9de6bb5adc74aefc21ea5291 Mon Sep 17 00:00:00 2001
+From 2ccca4d92ddf694d7e31dd4ce670c8bcaea7122f Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 24 Apr 2026 12:00:24 +0200
 Subject: [PATCH] feat(parakeet): Silero VAD simulated streaming (parity with
@@ -6,21 +6,21 @@ Subject: [PATCH] feat(parakeet): Silero VAD simulated streaming (parity with
 
 ---
  .../qvac-lib-infer-parakeet/CMakeLists.txt    |   4 +
- .../addon/src/addon/AddonJs.hpp               | 183 ++++++++++++
+ .../addon/src/addon/AddonJs.hpp               | 183 +++++++++++
  .../addon/src/js-interface/JSAdapter.cpp      |   5 +
  .../addon/src/js-interface/binding.cpp        |   3 +
  .../addon/src/model-interface/SileroVad.cpp   | 222 ++++++++++++++
  .../addon/src/model-interface/SileroVad.hpp   |  86 ++++++
- .../model-interface/StreamingProcessor.cpp    | 274 ++++++++++++++++++
- .../model-interface/StreamingProcessor.hpp    |  82 ++++++
+ .../model-interface/StreamingProcessor.cpp    | 286 ++++++++++++++++++
+ .../model-interface/StreamingProcessor.hpp    |  82 +++++
  .../parakeet/ParakeetConfig.hpp               |   3 +
  .../parakeet/ParakeetModel.hpp                |  12 +
  packages/qvac-lib-infer-parakeet/index.d.ts   |  41 +++
- packages/qvac-lib-infer-parakeet/index.js     |  86 +++++-
+ packages/qvac-lib-infer-parakeet/index.js     |  95 +++++-
  packages/qvac-lib-infer-parakeet/parakeet.js  |  52 ++++
  packages/sdk/schemas/transcription-config.ts  |   3 +
- .../plugins/parakeet-transcription/plugin.ts  |  65 ++++-
- 15 files changed, 1114 insertions(+), 7 deletions(-)
+ .../plugins/parakeet-transcription/plugin.ts  |  65 +++-
+ 15 files changed, 1135 insertions(+), 7 deletions(-)
  create mode 100644 packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.cpp
  create mode 100644 packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.hpp
  create mode 100644 packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp
@@ -597,10 +597,10 @@ index 0000000..7ef1c56
 +} // namespace qvac_lib_infer_parakeet
 diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp
 new file mode 100644
-index 0000000..f81aba3
+index 0000000..444a957
 --- /dev/null
 +++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp
-@@ -0,0 +1,274 @@
+@@ -0,0 +1,286 @@
 +#include "StreamingProcessor.hpp"
 +
 +#include <algorithm>
@@ -773,8 +773,20 @@ index 0000000..f81aba3
 +    if (shouldRunVad && bufferSize > 0) {
 +      bufferSizeAtLastVadRun_ = bufferSize;
 +
-+      const auto segments =
-+          vad_->getSegments(processBuffer_.data(), bufferSize, vadParams);
++      // Wrap VAD in try/catch so a Silero inference failure (wrong input
++      // shape, corrupt weights, etc) doesn't silently kill the thread and
++      // leave the client's response iterator hanging forever.
++      std::vector<SileroVad::Segment> segments;
++      try {
++        segments =
++            vad_->getSegments(processBuffer_.data(), bufferSize, vadParams);
++      } catch (const std::exception& e) {
++        hasError_ = true;
++        QLOG(
++            qvac_lib_inference_addon_cpp::logger::Priority::ERROR,
++            std::string("StreamingProcessor: VAD error: ") + e.what());
++        break;
++      }
 +      const int nSeg = static_cast<int>(segments.size());
 +
 +      if (nSeg > 0) {
@@ -1081,7 +1093,7 @@ index 45b5806..97d40b8 100644
     * Reload the model with new configuration parameters.
     * @param newConfig - New configuration parameters
 diff --git a/packages/qvac-lib-infer-parakeet/index.js b/packages/qvac-lib-infer-parakeet/index.js
-index eafe3e1..262b6c2 100644
+index eafe3e1..745ee35 100644
 --- a/packages/qvac-lib-infer-parakeet/index.js
 +++ b/packages/qvac-lib-infer-parakeet/index.js
 @@ -112,9 +112,12 @@ class TranscriptionParakeet {
@@ -1132,7 +1144,7 @@ index eafe3e1..262b6c2 100644
    async _withExclusiveRun (fn) {
      const prev = this._runQueueWaiter || Promise.resolve()
      let release
-@@ -257,16 +280,73 @@ class TranscriptionParakeet {
+@@ -257,16 +280,82 @@ class TranscriptionParakeet {
     * @param {AsyncIterable<Buffer>} audioStream - Stream of audio data (16kHz mono, Float32 or s16le)
     * @returns {Promise<QvacResponse>} - Response object for tracking the transcription job
     */
@@ -1188,21 +1200,30 @@ index eafe3e1..262b6c2 100644
 +
 +  async _handleStreamingAudio (audioStream) {
 +    this.logger.debug('Start handling streaming audio')
-+    for await (const chunk of audioStream) {
-+      let audioData
-+      if (chunk instanceof Float32Array) {
-+        audioData = chunk
-+      } else {
-+        const int16Data = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2)
-+        audioData = new Float32Array(int16Data.length)
-+        for (let i = 0; i < int16Data.length; i++) {
-+          audioData[i] = int16Data[i] / 32768.0
++    try {
++      for await (const chunk of audioStream) {
++        let audioData
++        if (chunk instanceof Float32Array) {
++          audioData = chunk
++        } else {
++          const int16Data = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2)
++          audioData = new Float32Array(int16Data.length)
++          for (let i = 0; i < int16Data.length; i++) {
++            audioData[i] = int16Data[i] / 32768.0
++          }
 +        }
++        this.addon.appendStreamingAudio({ input: audioData })
 +      }
-+      this.addon.appendStreamingAudio({ input: audioData })
++    } finally {
++      // Always close the native streaming session — leaking one blocks the
++      // next startStreaming() with "Streaming session already active".
++      this.logger.debug('Ending streaming session')
++      try {
++        this.addon.endStreaming()
++      } catch (err) {
++        this.logger.warn('endStreaming failed', err)
++      }
 +    }
-+    this.logger.debug('Ending streaming session')
-+    this.addon.endStreaming()
 +  }
 +
    /**

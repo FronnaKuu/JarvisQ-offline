@@ -3,6 +3,18 @@
 // and registers them into the core platform container. Must be awaited before
 // any core service or repository is used — typically from the Expo root layout.
 
+// Polyfill Buffer before anything else — @qvac/sdk pulls in bare-rpc →
+// bare-stream, which does Buffer.from(chunk, encoding) unconditionally when
+// writing strings/typed arrays through its Writable base. Hermes has atob
+// and TextEncoder but NOT Buffer, so the duplex transcribeStream path
+// crashes on the very first requestStream.write of the JSON request payload
+// with "Property 'Buffer' doesn't exist". Installing the standard `buffer`
+// polyfill at module load time fixes it for every SDK call downstream.
+import { Buffer } from 'buffer';
+if (typeof (globalThis as { Buffer?: unknown }).Buffer === 'undefined') {
+  (globalThis as { Buffer?: unknown }).Buffer = Buffer;
+}
+
 import { Audio } from 'expo-av';
 import { registerPlatform } from '@core/platform/PlatformContainer';
 import { ExpoFileSystem } from './ExpoFileSystem';

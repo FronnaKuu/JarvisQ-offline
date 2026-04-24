@@ -26,16 +26,17 @@ export const PARAKEET_HTTP = {
   vocab: hfResolve(PARAKEET_REPO, PARAKEET_COMMIT, 'vocab.txt'),
 } as const;
 
-// ─── Silero VAD v5 (snakers4/silero-vad) ─────────────────────────────────
+// ─── Silero VAD v5.1.2 (snakers4/silero-vad) ─────────────────────────────
 // Used by parakeet streaming (transcribeStream duplex) to segment live PCM
 // before invoking the offline recognizer on each detected speech segment.
-// The ONNX artifact is ~2 MB; pinned to a stable commit.
-
-const SILERO_VAD_REPO = 'onnx-community/silero-vad';
-const SILERO_VAD_COMMIT = 'main';
+// ~2 MB ONNX (plain protobuf, NOT the ggml-wrapped variant that QVAC's
+// VAD_SILERO_5_1_2 registry entry serves — that one fails to load via
+// Ort::Session with "Protobuf parsing failed"). Points at the canonical
+// snakers4/silero-vad v5.1.2 tag on GitHub: the model inputs are
+// [input, state (2,1,128), sr] which matches SileroVad.cpp.
 
 export const SILERO_VAD_HTTP = {
-  vad: hfResolve(SILERO_VAD_REPO, SILERO_VAD_COMMIT, 'onnx/model.onnx'),
+  vad: 'https://github.com/snakers4/silero-vad/raw/v5.1.2/src/silero_vad/data/silero_vad.onnx',
 } as const;
 
 // ─── Qwen3 1.7B (unsloth/Qwen3-1.7B-GGUF) ──────────────────────────────────
