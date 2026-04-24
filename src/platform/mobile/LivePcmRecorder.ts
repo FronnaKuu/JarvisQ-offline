@@ -9,7 +9,6 @@
 // the smallest viable dependency.
 
 import AudioRecord from 'react-native-live-audio-stream';
-import { Buffer } from 'buffer';
 
 const SAMPLE_RATE = 16000;
 const BITS_PER_SAMPLE = 16;
@@ -26,6 +25,21 @@ export interface LivePcmRecorderHandle {
   /** PCM chunks as they arrive from the mic. Yields until stop() is called. */
   chunks(): AsyncIterable<Uint8Array>;
   stop(): Promise<void>;
+}
+
+/**
+ * Decode base64 PCM into a Uint8Array. React Native exposes `atob` globally
+ * (via Hermes) but not `Buffer`, so we roll a tiny decoder instead of
+ * polyfilling the node `buffer` module for a single call.
+ */
+function base64ToUint8Array(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const len = binary.length;
+  const out = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
 }
 
 export class LivePcmRecorder {
@@ -58,7 +72,7 @@ export class LivePcmRecorder {
       on: (ev: 'data', cb: (d: string) => void) => { remove(): void };
     }).on('data', (base64: string) => {
       if (stopped) return;
-      const chunk = new Uint8Array(Buffer.from(base64, 'base64'));
+      const chunk = base64ToUint8Array(base64);
       const waiter = waiters.shift();
       if (waiter) waiter(chunk);
       else queue.push(chunk);
