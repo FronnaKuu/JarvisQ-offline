@@ -1,0 +1,1410 @@
+From 898512225689615847ac25d52720380518e7eb4a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 24 Apr 2026 12:00:24 +0200
+Subject: [PATCH] feat(parakeet): Silero VAD simulated streaming (parity with
+ whisper)
+
+---
+ .../qvac-lib-infer-parakeet/CMakeLists.txt    |   4 +
+ .../addon/src/addon/AddonJs.hpp               | 183 ++++++++++++
+ .../addon/src/js-interface/JSAdapter.cpp      |   5 +
+ .../addon/src/js-interface/binding.cpp        |   3 +
+ .../addon/src/model-interface/SileroVad.cpp   | 222 ++++++++++++++
+ .../addon/src/model-interface/SileroVad.hpp   |  86 ++++++
+ .../model-interface/StreamingProcessor.cpp    | 274 ++++++++++++++++++
+ .../model-interface/StreamingProcessor.hpp    |  82 ++++++
+ .../parakeet/ParakeetConfig.hpp               |   3 +
+ .../parakeet/ParakeetModel.hpp                |  12 +
+ packages/qvac-lib-infer-parakeet/index.d.ts   |  41 +++
+ packages/qvac-lib-infer-parakeet/index.js     |  86 +++++-
+ packages/qvac-lib-infer-parakeet/parakeet.js  |  52 ++++
+ packages/sdk/schemas/transcription-config.ts  |   3 +
+ .../plugins/parakeet-transcription/plugin.ts  |  65 ++++-
+ 15 files changed, 1114 insertions(+), 7 deletions(-)
+ create mode 100644 packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.cpp
+ create mode 100644 packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.hpp
+ create mode 100644 packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp
+ create mode 100644 packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.hpp
+
+diff --git a/packages/qvac-lib-infer-parakeet/CMakeLists.txt b/packages/qvac-lib-infer-parakeet/CMakeLists.txt
+index 0f636fb..0a5f80d 100644
+--- a/packages/qvac-lib-infer-parakeet/CMakeLists.txt
++++ b/packages/qvac-lib-infer-parakeet/CMakeLists.txt
+@@ -50,6 +50,10 @@ set(LIB_SRCS_PATH ${PROJECT_SOURCE_DIR}/addon/src/model-interface)
+ 
+ set(LIB_SRCS
+         ${LIB_SRCS_PATH}/ParakeetTypes.hpp
++        ${LIB_SRCS_PATH}/SileroVad.hpp
++        ${LIB_SRCS_PATH}/SileroVad.cpp
++        ${LIB_SRCS_PATH}/StreamingProcessor.hpp
++        ${LIB_SRCS_PATH}/StreamingProcessor.cpp
+         ${LIB_SRCS_PATH}/parakeet/ParakeetModel.hpp
+         ${LIB_SRCS_PATH}/parakeet/ParakeetModel.cpp
+         ${LIB_SRCS_PATH}/parakeet/ParakeetConfig.hpp
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/addon/AddonJs.hpp b/packages/qvac-lib-infer-parakeet/addon/src/addon/AddonJs.hpp
+index 24735cd..7865603 100644
+--- a/packages/qvac-lib-infer-parakeet/addon/src/addon/AddonJs.hpp
++++ b/packages/qvac-lib-infer-parakeet/addon/src/addon/AddonJs.hpp
+@@ -16,11 +16,24 @@
+ #include <qvac-lib-inference-addon-cpp/queue/OutputCallbackJs.hpp>
+ 
+ #include "model-interface/ParakeetTypes.hpp"
++#include "model-interface/StreamingProcessor.hpp"
+ #include "model-interface/parakeet/ParakeetModel.hpp"
+ #include "js-interface/JSAdapter.hpp"
+ 
++#include <map>
++#include <mutex>
++
+ namespace qvac_lib_infer_parakeet {
+ 
++// Active streaming sessions indexed by addon instance pointer. Lives in the
++// header because only the JS-facing handlers touch it, and keeping it inline
++// avoids adding a new translation unit to the build.
++inline std::mutex g_streamingMtx;
++inline std::map<
++    qvac_lib_inference_addon_cpp::AddonJs*,
++    std::unique_ptr<StreamingProcessor>>
++    g_streamingSessions;
++
+ namespace js = qvac_lib_inference_addon_cpp::js;
+ 
+ inline ParakeetConfig createParakeetConfig(
+@@ -110,4 +123,174 @@ inline js_value_t* runJob(js_env_t* env, js_callback_info_t* info) try {
+ }
+ JSCATCH
+ 
++// ── Streaming API ────────────────────────────────────────────────────────
++// Mirrors the whisper addon surface so the SDK plugin layer can treat the
++// two models interchangeably. Config is a plain JS object carrying Silero
++// VAD model path + VAD tuning knobs; StreamingProcessor owns the VAD
++// session + background thread that drives segmentation.
++
++inline js_value_t*
++startStreaming(js_env_t* env, js_callback_info_t* info) try {
++  using namespace qvac_lib_inference_addon_cpp;
++
++  JsArgsParser args(env, info);
++  AddonJs& instance = JsInterface::getInstance(env, args.get(0, "instance"));
++  auto configObj = args.getJsObject(1, "config");
++
++  StreamingProcessor::Config config;
++
++  auto maybeVadModelPath =
++      configObj.getOptionalProperty<js::String>(env, "vadModelPath");
++  if (maybeVadModelPath.has_value()) {
++    config.vadModelPath = maybeVadModelPath.value().as<std::string>(env);
++  }
++  if (config.vadModelPath.empty()) {
++    throw std::runtime_error("vadModelPath is required for streaming");
++  }
++
++  auto maybeJobId = configObj.getOptionalProperty<js::Number>(env, "jobId");
++  if (!maybeJobId.has_value()) {
++    throw std::runtime_error("jobId is required for streaming");
++  }
++  const double jobIdDouble = maybeJobId.value().as<double>(env);
++  if (!(jobIdDouble >= 1.0)) {
++    throw std::runtime_error("jobId must be a positive integer");
++  }
++  config.jobId = static_cast<decltype(config.jobId)>(jobIdDouble);
++
++  auto maybeVadThreshold =
++      configObj.getOptionalProperty<js::Number>(env, "vadThreshold");
++  if (maybeVadThreshold.has_value()) {
++    config.vadThreshold =
++        static_cast<float>(maybeVadThreshold.value().as<double>(env));
++  }
++
++  auto maybeMinSilence =
++      configObj.getOptionalProperty<js::Number>(env, "minSilenceDurationMs");
++  if (maybeMinSilence.has_value()) {
++    config.minSilenceDurationMs =
++        static_cast<int>(maybeMinSilence.value().as<double>(env));
++  }
++
++  auto maybeMinSpeech =
++      configObj.getOptionalProperty<js::Number>(env, "minSpeechDurationMs");
++  if (maybeMinSpeech.has_value()) {
++    config.minSpeechDurationMs =
++        static_cast<int>(maybeMinSpeech.value().as<double>(env));
++  }
++
++  auto maybeMaxSpeech =
++      configObj.getOptionalProperty<js::Number>(env, "maxSpeechDurationS");
++  if (maybeMaxSpeech.has_value()) {
++    config.maxSpeechDurationS =
++        static_cast<float>(maybeMaxSpeech.value().as<double>(env));
++    config.maxBufferSamples =
++        static_cast<int>(config.maxSpeechDurationS) * config.sampleRate;
++  }
++
++  auto maybeSpeechPad =
++      configObj.getOptionalProperty<js::Number>(env, "speechPadMs");
++  if (maybeSpeechPad.has_value()) {
++    config.speechPadMs =
++        static_cast<int>(maybeSpeechPad.value().as<double>(env));
++  }
++
++  auto maybeSamplesOverlap =
++      configObj.getOptionalProperty<js::Number>(env, "samplesOverlap");
++  if (maybeSamplesOverlap.has_value()) {
++    config.samplesOverlap =
++        static_cast<float>(maybeSamplesOverlap.value().as<double>(env));
++  }
++
++  {
++    std::lock_guard lock(g_streamingMtx);
++
++    if (g_streamingSessions.count(&instance) != 0) {
++      throw std::runtime_error(
++          "Streaming session already active for this instance");
++    }
++
++    auto& parakeetModel =
++        dynamic_cast<ParakeetModel&>(instance.addonCpp->model.get());
++    g_streamingSessions[&instance] = std::make_unique<StreamingProcessor>(
++        parakeetModel,
++        instance.addonCpp->outputQueue,
++        config);
++  }
++
++  return js::Boolean::create(env, true);
++}
++JSCATCH
++
++inline js_value_t*
++appendStreamingAudio(js_env_t* env, js_callback_info_t* info) try {
++  using namespace qvac_lib_inference_addon_cpp;
++
++  JsArgsParser args(env, info);
++  AddonJs& instance = JsInterface::getInstance(env, args.get(0, "instance"));
++  auto [type, jsInput] = JsInterface::getInput(args);
++
++  if (type != "audio") {
++    throw qvac_errors::StatusError(
++        qvac_errors::general_error::InvalidArgument,
++        "Unknown input type: " + type);
++  }
++
++  // Parakeet's append path accepts float32 PCM directly (matching runJob);
++  // there's no format auto-detect like whisper because the SDK wrapper
++  // already normalises to Float32Array before forwarding.
++  std::vector<float> samples =
++      js::TypedArray<float>(env, jsInput).as<std::vector<float>>(env);
++
++  if (samples.empty()) {
++    return js::Boolean::create(env, false);
++  }
++
++  StreamingProcessor* processor = nullptr;
++  {
++    std::lock_guard lock(g_streamingMtx);
++    auto it = g_streamingSessions.find(&instance);
++    if (it == g_streamingSessions.end()) {
++      throw std::runtime_error("No active streaming session for this instance");
++    }
++    processor = it->second.get();
++  }
++
++  processor->appendAudio(std::move(samples));
++  return js::Boolean::create(env, true);
++}
++JSCATCH
++
++inline bool
++cleanupStreamingSession(
++    qvac_lib_inference_addon_cpp::AddonJs& instance, bool forceful = false) {
++  std::unique_ptr<StreamingProcessor> processor;
++  {
++    std::lock_guard lock(g_streamingMtx);
++    auto it = g_streamingSessions.find(&instance);
++    if (it == g_streamingSessions.end()) {
++      return false;
++    }
++    processor = std::move(it->second);
++    g_streamingSessions.erase(it);
++  }
++  if (forceful) {
++    processor->cancel();
++  } else {
++    processor->end();
++  }
++  return true;
++}
++
++inline js_value_t*
++endStreaming(js_env_t* env, js_callback_info_t* info) try {
++  using namespace qvac_lib_inference_addon_cpp;
++
++  JsArgsParser args(env, info);
++  AddonJs& instance = JsInterface::getInstance(env, args.get(0, "instance"));
++  bool cleaned = cleanupStreamingSession(instance, false);
++  return js::Boolean::create(env, cleaned);
++}
++JSCATCH
++
+ } // namespace qvac_lib_infer_parakeet
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/js-interface/JSAdapter.cpp b/packages/qvac-lib-infer-parakeet/addon/src/js-interface/JSAdapter.cpp
+index 2e276f1..efacb99 100644
+--- a/packages/qvac-lib-infer-parakeet/addon/src/js-interface/JSAdapter.cpp
++++ b/packages/qvac-lib-infer-parakeet/addon/src/js-interface/JSAdapter.cpp
+@@ -130,6 +130,11 @@ auto JSAdapter::loadFromJSObject(js::Object jsObject, js_env_t* env)
+   if (sortformerPathOpt.has_value()) {
+     config.sortformerPath = sortformerPathOpt.value().as<std::string>(env);
+   }
++  auto vadModelPathOpt =
++      jsObject.getOptionalProperty<js::String>(env, "vadModelPath");
++  if (vadModelPathOpt.has_value()) {
++    config.vadModelPath = vadModelPathOpt.value().as<std::string>(env);
++  }
+ 
+   auto innerConfigOpt = jsObject.getOptionalProperty<js::Object>(env, "config");
+   if (innerConfigOpt.has_value()) {
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/js-interface/binding.cpp b/packages/qvac-lib-infer-parakeet/addon/src/js-interface/binding.cpp
+index ca54d06..dabbe7c 100644
+--- a/packages/qvac-lib-infer-parakeet/addon/src/js-interface/binding.cpp
++++ b/packages/qvac-lib-infer-parakeet/addon/src/js-interface/binding.cpp
+@@ -23,6 +23,9 @@ auto qvac_lib_infer_parakeet_exports(js_env_t* env, js_value_t* exports)
+ 
+   V("createInstance", qvac_lib_infer_parakeet::createInstance)
+   V("runJob", qvac_lib_infer_parakeet::runJob)
++  V("startStreaming", qvac_lib_infer_parakeet::startStreaming)
++  V("appendStreamingAudio", qvac_lib_infer_parakeet::appendStreamingAudio)
++  V("endStreaming", qvac_lib_infer_parakeet::endStreaming)
+   V("loadWeights", qvac_lib_inference_addon_cpp::JsInterface::loadWeights)
+   V("activate", qvac_lib_inference_addon_cpp::JsInterface::activate)
+   V("cancel", qvac_lib_inference_addon_cpp::JsInterface::cancel)
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.cpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.cpp
+new file mode 100644
+index 0000000..3a6dd2b
+--- /dev/null
++++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.cpp
+@@ -0,0 +1,222 @@
++#include "SileroVad.hpp"
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstring>
++#include <stdexcept>
++
++#include <onnxruntime_cxx_api.h>
++
++namespace qvac_lib_infer_parakeet {
++
++namespace {
++
++// Silero v5 uses a fixed 512-sample window at 16 kHz (32 ms).
++constexpr int kSileroWindowSamples16k = 512;
++// LSTM hidden state tensor shape: [2, 1, 128]  (layers*directions, batch, hidden).
++constexpr int kSileroStateSize = 2 * 1 * 128;
++
++} // namespace
++
++SileroVad::SileroVad(const std::string& modelPath, int sampleRate)
++    : sampleRate_(sampleRate) {
++  if (sampleRate_ != 16000 && sampleRate_ != 8000) {
++    throw std::runtime_error(
++        "SileroVad: unsupported sample rate " + std::to_string(sampleRate_) +
++        " (only 8000 or 16000 are allowed)");
++  }
++
++  windowSamples_ = (sampleRate_ == 16000) ? kSileroWindowSamples16k
++                                          : kSileroWindowSamples16k / 2;
++
++  env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "SileroVad");
++
++  options_ = std::make_unique<Ort::SessionOptions>();
++  options_->SetInterOpNumThreads(1);
++  options_->SetIntraOpNumThreads(1);
++  options_->SetGraphOptimizationLevel(
++      GraphOptimizationLevel::ORT_ENABLE_ALL);
++
++#ifdef _WIN32
++  // Ort::Session on Windows expects a wide-char path.
++  std::wstring widePath(modelPath.begin(), modelPath.end());
++  session_ = std::make_unique<Ort::Session>(
++      *env_, widePath.c_str(), *options_);
++#else
++  session_ = std::make_unique<Ort::Session>(
++      *env_, modelPath.c_str(), *options_);
++#endif
++
++  memInfo_ = std::make_unique<Ort::MemoryInfo>(
++      Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault));
++
++  Ort::AllocatorWithDefaultOptions allocator;
++  const size_t numInputs = session_->GetInputCount();
++  inputNames_.reserve(numInputs);
++  for (size_t i = 0; i < numInputs; ++i) {
++    auto name = session_->GetInputNameAllocated(i, allocator);
++    inputNames_.emplace_back(name.get());
++  }
++  const size_t numOutputs = session_->GetOutputCount();
++  outputNames_.reserve(numOutputs);
++  for (size_t i = 0; i < numOutputs; ++i) {
++    auto name = session_->GetOutputNameAllocated(i, allocator);
++    outputNames_.emplace_back(name.get());
++  }
++
++  state_.assign(kSileroStateSize, 0.0F);
++}
++
++SileroVad::~SileroVad() = default;
++
++void SileroVad::reset() {
++  std::fill(state_.begin(), state_.end(), 0.0F);
++}
++
++float SileroVad::runFrame(const float* frame, int frameSamples) {
++  // Silero v5 inputs: { input [1, window], state [2,1,128], sr [1] }
++  // Outputs:          { output [1, 1], state_out [2,1,128] }
++  std::array<int64_t, 2> inputShape = {1, static_cast<int64_t>(frameSamples)};
++  std::array<int64_t, 3> stateShape = {2, 1, 128};
++  std::array<int64_t, 1> srShape = {1};
++  std::array<int64_t, 1> srData = {static_cast<int64_t>(sampleRate_)};
++
++  std::vector<Ort::Value> inputs;
++  inputs.reserve(3);
++  inputs.emplace_back(Ort::Value::CreateTensor<float>(
++      *memInfo_, const_cast<float*>(frame), frameSamples, inputShape.data(),
++      inputShape.size()));
++  inputs.emplace_back(Ort::Value::CreateTensor<float>(
++      *memInfo_, state_.data(), state_.size(), stateShape.data(),
++      stateShape.size()));
++  inputs.emplace_back(Ort::Value::CreateTensor<int64_t>(
++      *memInfo_, srData.data(), srData.size(), srShape.data(),
++      srShape.size()));
++
++  std::vector<const char*> inputNamePtrs;
++  inputNamePtrs.reserve(inputNames_.size());
++  for (const auto& n : inputNames_) inputNamePtrs.push_back(n.c_str());
++  std::vector<const char*> outputNamePtrs;
++  outputNamePtrs.reserve(outputNames_.size());
++  for (const auto& n : outputNames_) outputNamePtrs.push_back(n.c_str());
++
++  auto outputs = session_->Run(
++      Ort::RunOptions{nullptr}, inputNamePtrs.data(), inputs.data(),
++      inputs.size(), outputNamePtrs.data(), outputNamePtrs.size());
++
++  if (outputs.size() < 2) {
++    throw std::runtime_error("SileroVad: unexpected output count");
++  }
++
++  const float prob = *outputs[0].GetTensorData<float>();
++
++  // Persist new LSTM state for the next frame.
++  const auto* newState = outputs[1].GetTensorData<float>();
++  std::memcpy(state_.data(), newState, state_.size() * sizeof(float));
++
++  return prob;
++}
++
++std::vector<SileroVad::Segment> SileroVad::getSegments(
++    const float* samples, int numSamples, const Params& params) {
++  // Reset LSTM state so the probability track only reflects the current
++  // buffer — StreamingProcessor hands us the full pendingAudio buffer each
++  // time and we must be deterministic across calls.
++  reset();
++
++  const int window = windowSamples_;
++  if (window <= 0 || numSamples < window) {
++    return {};
++  }
++
++  const int numWindows = numSamples / window;
++  std::vector<float> probs;
++  probs.reserve(numWindows);
++  for (int i = 0; i < numWindows; ++i) {
++    probs.push_back(runFrame(samples + (i * window), window));
++  }
++
++  // Threshold + hysteresis segmentation (mirrors whisper.cpp's VAD logic).
++  const float threshold = params.threshold;
++  const float negThreshold = std::max(0.0F, threshold - 0.15F);
++  const int minSpeechFrames = std::max(
++      1, static_cast<int>(std::round(
++             static_cast<float>(params.minSpeechDurationMs) /
++             1000.0F * static_cast<float>(sampleRate_) /
++             static_cast<float>(window))));
++  const int minSilenceFrames = std::max(
++      1, static_cast<int>(std::round(
++             static_cast<float>(params.minSilenceDurationMs) /
++             1000.0F * static_cast<float>(sampleRate_) /
++             static_cast<float>(window))));
++  const int maxSpeechFrames = std::max(
++      minSpeechFrames + 1,
++      static_cast<int>(std::round(
++          params.maxSpeechDurationS * static_cast<float>(sampleRate_) /
++          static_cast<float>(window))));
++  const int padFrames = std::max(
++      0, static_cast<int>(std::round(
++             static_cast<float>(params.speechPadMs) / 1000.0F *
++             static_cast<float>(sampleRate_) /
++             static_cast<float>(window))));
++
++  std::vector<Segment> segments;
++  bool inSpeech = false;
++  int speechStartFrame = 0;
++  int silenceStartFrame = -1;
++
++  auto framesToCs = [&](int frames) {
++    // centiseconds = frames * window * 100 / sampleRate
++    return (frames * window * 100) / sampleRate_;
++  };
++
++  for (int i = 0; i < numWindows; ++i) {
++    const float p = probs[i];
++    if (!inSpeech) {
++      if (p >= threshold) {
++        inSpeech = true;
++        speechStartFrame = std::max(0, i - padFrames);
++        silenceStartFrame = -1;
++      }
++      continue;
++    }
++
++    // Currently inside a speech segment.
++    if (p < negThreshold) {
++      if (silenceStartFrame < 0) {
++        silenceStartFrame = i;
++      }
++      const int silenceLen = i - silenceStartFrame + 1;
++      if (silenceLen >= minSilenceFrames) {
++        const int speechEndFrame =
++            std::min(numWindows, silenceStartFrame + padFrames);
++        const int speechLen = speechEndFrame - speechStartFrame;
++        if (speechLen >= minSpeechFrames) {
++          segments.push_back(
++              {framesToCs(speechStartFrame), framesToCs(speechEndFrame)});
++        }
++        inSpeech = false;
++        silenceStartFrame = -1;
++      }
++    } else {
++      silenceStartFrame = -1;
++    }
++
++    // Hard cap on maximum speech length.
++    if (inSpeech && (i - speechStartFrame) >= maxSpeechFrames) {
++      const int speechEndFrame = i + 1;
++      segments.push_back(
++          {framesToCs(speechStartFrame), framesToCs(speechEndFrame)});
++      inSpeech = false;
++      silenceStartFrame = -1;
++    }
++  }
++
++  // Trailing speech that never closed — leave open for the next invocation
++  // unless the caller is at end of stream (handled at the
++  // StreamingProcessor level via the "force-process final buffer" path).
++  return segments;
++}
++
++} // namespace qvac_lib_infer_parakeet
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.hpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.hpp
+new file mode 100644
+index 0000000..7ef1c56
+--- /dev/null
++++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.hpp
+@@ -0,0 +1,86 @@
++#pragma once
++
++#include <cstdint>
++#include <memory>
++#include <string>
++#include <vector>
++
++namespace Ort {
++class Env;
++class Session;
++class SessionOptions;
++class MemoryInfo;
++} // namespace Ort
++
++namespace qvac_lib_infer_parakeet {
++
++// Standalone Silero v5 VAD running on ONNX Runtime.
++//
++// Parakeet's addon historically had no VAD — whisper.cpp bakes Silero into
++// its own C++ library, but parakeet links onnxruntime via @qvac/onnx.
++// This class opens a dedicated Ort::Session for silero_vad.onnx and exposes
++// a segmentation API modelled after whisper_vad_segments_from_samples so
++// StreamingProcessor can stay symmetric with the whisper counterpart.
++//
++// Silero v5 operates on 16 kHz mono s16le audio. It consumes fixed-size
++// windows (512 samples, 32 ms) and returns a speech probability per window.
++// Hidden state (LSTM h/c concatenated into a single [2, 1, 128] tensor) is
++// carried across calls by the caller to keep inference stateful.
++class SileroVad {
++public:
++  struct Segment {
++    // Boundaries in centiseconds (same unit whisper uses) so the integration
++    // point in StreamingProcessor remains a drop-in.
++    int t0Cs;
++    int t1Cs;
++  };
++
++  struct Params {
++    float threshold = 0.5F;
++    int minSpeechDurationMs = 250;
++    int minSilenceDurationMs = 500;
++    float maxSpeechDurationS = 30.0F;
++    int speechPadMs = 30;
++    float samplesOverlap = 0.1F;
++  };
++
++  SileroVad(const std::string& modelPath, int sampleRate);
++  ~SileroVad();
++
++  SileroVad(const SileroVad&) = delete;
++  SileroVad& operator=(const SileroVad&) = delete;
++  SileroVad(SileroVad&&) = delete;
++  SileroVad& operator=(SileroVad&&) = delete;
++
++  // Run the VAD over `samples` (float mono PCM at `sampleRate_`) and return
++  // the speech segments detected. The implementation re-runs the model over
++  // the full buffer on every call; StreamingProcessor only invokes us once
++  // new audio has accumulated, matching whisper.cpp's semantics.
++  std::vector<Segment>
++  getSegments(const float* samples, int numSamples, const Params& params);
++
++  // Reset the internal LSTM state (h/c).
++  void reset();
++
++  int sampleRate() const { return sampleRate_; }
++
++private:
++  float runFrame(const float* frame, int frameSamples);
++
++  int sampleRate_;
++  int windowSamples_ = 0;
++
++  std::unique_ptr<Ort::Env> env_;
++  std::unique_ptr<Ort::SessionOptions> options_;
++  std::unique_ptr<Ort::Session> session_;
++  std::unique_ptr<Ort::MemoryInfo> memInfo_;
++
++  // LSTM hidden state: single tensor [2, 1, 128] (Silero v5).
++  std::vector<float> state_;
++
++  // Cached IO names owned by the session allocator.
++  std::vector<std::string> inputNames_;
++  std::vector<std::string> outputNames_;
++};
++
++} // namespace qvac_lib_infer_parakeet
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp
+new file mode 100644
+index 0000000..f81aba3
+--- /dev/null
++++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp
+@@ -0,0 +1,274 @@
++#include "StreamingProcessor.hpp"
++
++#include <algorithm>
++#include <memory>
++#include <stdexcept>
++
++#include "parakeet/ParakeetModel.hpp"
++#include "qvac-lib-inference-addon-cpp/Logger.hpp"
++
++namespace qvac_lib_infer_parakeet {
++
++StreamingProcessor::StreamingProcessor(
++    ParakeetModel& model,
++    std::shared_ptr<qvac_lib_inference_addon_cpp::OutputQueue> outputQueue,
++    Config config)
++    : model_(model), outputQueue_(std::move(outputQueue)),
++      config_(std::move(config)) {
++
++  if (config_.vadModelPath.empty()) {
++    throw std::runtime_error(
++        "StreamingProcessor: vadModelPath is required");
++  }
++
++  vad_ = std::make_unique<SileroVad>(config_.vadModelPath, config_.sampleRate);
++
++  QLOG(
++      qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
++      "StreamingProcessor: VAD initialized from " + config_.vadModelPath);
++
++  thread_ = std::thread([this]() { processLoop(); });
++}
++
++StreamingProcessor::~StreamingProcessor() {
++  {
++    std::lock_guard lock(mtx_);
++    ended_ = true;
++  }
++  cv_.notify_one();
++  if (thread_.joinable()) {
++    thread_.join();
++  }
++  vad_.reset();
++}
++
++void StreamingProcessor::appendAudio(std::vector<float>&& samples) {
++  {
++    std::lock_guard lock(mtx_);
++    if (ended_) {
++      return;
++    }
++    if (pendingAudio_.empty()) {
++      pendingAudio_ = std::move(samples);
++    } else {
++      pendingAudio_.insert(pendingAudio_.end(), samples.begin(), samples.end());
++    }
++    if (static_cast<int>(pendingAudio_.size()) > config_.maxBufferSamples) {
++      const int excess =
++          static_cast<int>(pendingAudio_.size()) - config_.maxBufferSamples;
++      pendingAudio_.erase(
++          pendingAudio_.begin(), pendingAudio_.begin() + excess);
++      QLOG(
++          qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
++          "StreamingProcessor: dropped " + std::to_string(excess) +
++              " samples from pendingAudio_ (backpressure)");
++    }
++  }
++  cv_.notify_one();
++}
++
++void StreamingProcessor::end() {
++  {
++    std::lock_guard lock(mtx_);
++    ended_ = true;
++  }
++  cv_.notify_one();
++  if (thread_.joinable()) {
++    thread_.join();
++  }
++}
++
++void StreamingProcessor::cancel() {
++  model_.cancel();
++  {
++    std::lock_guard lock(mtx_);
++    cancelled_ = true;
++    ended_ = true;
++  }
++  cv_.notify_one();
++  if (thread_.joinable()) {
++    thread_.join();
++  }
++}
++
++void StreamingProcessor::processAudioRange(int startSample, int endSample) {
++  const int len = endSample - startSample;
++  if (len <= 0) {
++    return;
++  }
++
++  QLOG(
++      qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
++      "StreamingProcessor: processing " + std::to_string(len) + " samples (" +
++          std::to_string(
++              static_cast<double>(len) /
++              static_cast<double>(config_.sampleRate)) +
++          "s)");
++
++  ParakeetModel::Input segment(
++      processBuffer_.begin() + startSample,
++      processBuffer_.begin() + endSample);
++
++  try {
++    model_.process(segment);
++    auto transcripts = model_.takeOutput();
++    if (!transcripts.empty()) {
++      outputQueue_->queueResult(std::any(std::move(transcripts)));
++    }
++  } catch (const std::exception& e) {
++    hasError_ = true;
++    QLOG(
++        qvac_lib_inference_addon_cpp::logger::Priority::ERROR,
++        std::string("StreamingProcessor: processing error: ") + e.what());
++  }
++}
++
++void StreamingProcessor::processLoop() {
++  QLOG(
++      qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
++      "StreamingProcessor: thread started (VAD-based segmentation)");
++
++  model_.prepareForStreaming();
++
++  SileroVad::Params vadParams;
++  vadParams.threshold = config_.vadThreshold;
++  vadParams.minSpeechDurationMs = config_.minSpeechDurationMs;
++  vadParams.minSilenceDurationMs = config_.minSilenceDurationMs;
++  vadParams.maxSpeechDurationS = config_.maxSpeechDurationS;
++  vadParams.speechPadMs = config_.speechPadMs;
++  vadParams.samplesOverlap = config_.samplesOverlap;
++
++  while (true) {
++    bool done = false;
++    bool wasCancelled = false;
++
++    {
++      std::unique_lock lock(mtx_);
++      cv_.wait(lock, [this]() {
++        return ended_ || !pendingAudio_.empty();
++      });
++
++      processBuffer_.insert(
++          processBuffer_.end(), pendingAudio_.begin(), pendingAudio_.end());
++      pendingAudio_.clear();
++
++      done = ended_;
++      wasCancelled = cancelled_;
++    }
++
++    if (wasCancelled) {
++      break;
++    }
++
++    const int bufferSize = static_cast<int>(processBuffer_.size());
++
++    const bool shouldRunVad =
++        (bufferSize - bufferSizeAtLastVadRun_) >=
++            config_.vadRunIntervalSamples ||
++        done;
++
++    if (shouldRunVad && bufferSize > 0) {
++      bufferSizeAtLastVadRun_ = bufferSize;
++
++      const auto segments =
++          vad_->getSegments(processBuffer_.data(), bufferSize, vadParams);
++      const int nSeg = static_cast<int>(segments.size());
++
++      if (nSeg > 0) {
++        const float totalDurationS =
++            static_cast<float>(bufferSize) /
++            static_cast<float>(config_.sampleRate);
++
++        constexpr float CS_TO_SEC = 0.01F;
++
++        int lastComplete = -1;
++        for (int i = 0; i < nSeg; ++i) {
++          const float t1S = static_cast<float>(segments[i].t1Cs) * CS_TO_SEC;
++          const float marginS =
++              static_cast<float>(config_.speechPadMs) / 1000.0F;
++          if (t1S + marginS < totalDurationS) {
++            lastComplete = i;
++          }
++        }
++
++        if (done) {
++          lastComplete = nSeg - 1;
++        }
++
++        if (lastComplete >= 0) {
++          QLOG(
++              qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
++              "StreamingProcessor: VAD found " + std::to_string(nSeg) +
++                  " segment(s), " + std::to_string(lastComplete + 1) +
++                  " complete, totalDuration=" +
++                  std::to_string(totalDurationS) + "s");
++
++          for (int i = 0; i <= lastComplete; ++i) {
++            const float t0S =
++                static_cast<float>(segments[i].t0Cs) * CS_TO_SEC;
++            const float t1S =
++                static_cast<float>(segments[i].t1Cs) * CS_TO_SEC;
++            const int startSample = std::max(
++                0,
++                static_cast<int>(
++                    t0S * static_cast<float>(config_.sampleRate)));
++            const int endSample = std::min(
++                static_cast<int>(
++                    t1S * static_cast<float>(config_.sampleRate)),
++                bufferSize);
++            if (endSample > startSample) {
++              processAudioRange(startSample, endSample);
++            }
++          }
++
++          const float lastT1S =
++              static_cast<float>(segments[lastComplete].t1Cs) * CS_TO_SEC;
++          const int trimPoint = std::min(
++              static_cast<int>(
++                  lastT1S * static_cast<float>(config_.sampleRate)),
++              bufferSize);
++          processBuffer_.erase(
++              processBuffer_.begin(), processBuffer_.begin() + trimPoint);
++          bufferSizeAtLastVadRun_ = 0;
++        }
++      }
++
++      if (static_cast<int>(processBuffer_.size()) >=
++          config_.maxBufferSamples) {
++        QLOG(
++            qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
++            "StreamingProcessor: buffer overflow, force-processing " +
++                std::to_string(processBuffer_.size()) + " samples");
++        processAudioRange(0, static_cast<int>(processBuffer_.size()));
++        processBuffer_.clear();
++        bufferSizeAtLastVadRun_ = 0;
++      }
++    }
++
++    if (done) {
++      break;
++    }
++  }
++
++  {
++    std::lock_guard lock(mtx_);
++    if (cancelled_) {
++      outputQueue_->queueException(std::runtime_error("Job cancelled"));
++      return;
++    }
++  }
++
++  if (!processBuffer_.empty()) {
++    processAudioRange(0, static_cast<int>(processBuffer_.size()));
++    processBuffer_.clear();
++  }
++
++  if (hasError_) {
++    outputQueue_->queueException(std::runtime_error(
++        "StreamingProcessor: one or more segments failed during processing"));
++  } else {
++    outputQueue_->queueJobEnded();
++  }
++}
++
++} // namespace qvac_lib_infer_parakeet
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.hpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.hpp
+new file mode 100644
+index 0000000..1c0b289
+--- /dev/null
++++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.hpp
+@@ -0,0 +1,82 @@
++#pragma once
++
++#include <condition_variable>
++#include <cstdint>
++#include <memory>
++#include <mutex>
++#include <string>
++#include <thread>
++#include <vector>
++
++#include "SileroVad.hpp"
++#include "qvac-lib-inference-addon-cpp/queue/OutputQueue.hpp"
++
++namespace qvac_lib_infer_parakeet {
++
++class ParakeetModel;
++
++// VAD-driven simulated-streaming processor for the Parakeet addon.
++// Mirrors qvac_lib_inference_addon_whisper::StreamingProcessor one-to-one
++// but uses SileroVad (ONNX session) in place of whisper_vad_context and
++// routes transcripts through ParakeetModel::process + takeOutput.
++class StreamingProcessor {
++public:
++  struct Config {
++    std::uint64_t jobId = 0;
++    static constexpr int kDefaultSampleRate = 16000;
++    static constexpr float kDefaultMaxSpeechDurationS = 30.0F;
++    static constexpr float kVadRunIntervalS = 0.3F;
++
++    int sampleRate = kDefaultSampleRate;
++    std::string vadModelPath;
++    float vadThreshold = 0.5F;
++    int minSilenceDurationMs = 500;
++    int minSpeechDurationMs = 250;
++    float maxSpeechDurationS = kDefaultMaxSpeechDurationS;
++    int speechPadMs = 30;
++    float samplesOverlap = 0.1F;
++    int maxBufferSamples =
++        static_cast<int>(kDefaultMaxSpeechDurationS) * kDefaultSampleRate;
++    int vadRunIntervalSamples =
++        static_cast<int>(kVadRunIntervalS * kDefaultSampleRate);
++  };
++
++  StreamingProcessor(
++      ParakeetModel& model,
++      std::shared_ptr<qvac_lib_inference_addon_cpp::OutputQueue> outputQueue,
++      Config config);
++
++  ~StreamingProcessor();
++
++  StreamingProcessor(const StreamingProcessor&) = delete;
++  StreamingProcessor& operator=(const StreamingProcessor&) = delete;
++  StreamingProcessor(StreamingProcessor&&) = delete;
++  StreamingProcessor& operator=(StreamingProcessor&&) = delete;
++
++  void appendAudio(std::vector<float>&& samples);
++  void end();
++  void cancel();
++
++private:
++  void processLoop();
++  void processAudioRange(int startSample, int endSample);
++
++  ParakeetModel& model_;
++  std::shared_ptr<qvac_lib_inference_addon_cpp::OutputQueue> outputQueue_;
++  Config config_;
++
++  mutable std::mutex mtx_;
++  std::condition_variable cv_;
++  std::vector<float> pendingAudio_;
++  std::vector<float> processBuffer_;
++  bool ended_ = false;
++  bool cancelled_ = false;
++  bool hasError_ = false;
++
++  std::unique_ptr<SileroVad> vad_;
++  int bufferSizeAtLastVadRun_ = 0;
++
++  std::thread thread_;
++};
++
++} // namespace qvac_lib_infer_parakeet
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/parakeet/ParakeetConfig.hpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/parakeet/ParakeetConfig.hpp
+index 9f80d7d..19e3354 100644
+--- a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/parakeet/ParakeetConfig.hpp
++++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/parakeet/ParakeetConfig.hpp
+@@ -19,6 +19,8 @@ struct ParakeetConfig {
+   std::string eouEncoderPath;
+   std::string eouDecoderPath;
+   std::string sortformerPath;
++  // Silero VAD (optional, only used by streaming path).
++  std::string vadModelPath;
+   ModelType modelType = ModelType::TDT;
+   int maxThreads = 4;
+   bool useGPU = false;
+@@ -43,6 +45,7 @@ struct ParakeetConfig {
+            eouEncoderPath == other.eouEncoderPath &&
+            eouDecoderPath == other.eouDecoderPath &&
+            sortformerPath == other.sortformerPath &&
++           vadModelPath == other.vadModelPath &&
+            modelType == other.modelType && maxThreads == other.maxThreads &&
+            useGPU == other.useGPU && sampleRate == other.sampleRate &&
+            channels == other.channels &&
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/parakeet/ParakeetModel.hpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/parakeet/ParakeetModel.hpp
+index b2ee6ad..8c6972e 100644
+--- a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/parakeet/ParakeetModel.hpp
++++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/parakeet/ParakeetModel.hpp
+@@ -84,6 +84,18 @@ public:
+     output_.push_back(transcript);
+   }
+ 
++  // Streaming helpers — mirror the WhisperModel surface used by the
++  // shared StreamingProcessor pattern.
++  Output takeOutput() {
++    Output result = std::move(output_);
++    output_.clear();
++    return result;
++  }
++
++  void prepareForStreaming() {
++    reset();
++  }
++
+   void saveLoadParams(const ParakeetConfig& config) { cfg_ = config; }
+ 
+   template <typename T, typename... Args>
+diff --git a/packages/qvac-lib-infer-parakeet/index.d.ts b/packages/qvac-lib-infer-parakeet/index.d.ts
+index 45b5806..97d40b8 100644
+--- a/packages/qvac-lib-infer-parakeet/index.d.ts
++++ b/packages/qvac-lib-infer-parakeet/index.d.ts
+@@ -28,6 +28,8 @@ export interface ParakeetConfig {
+   timestampsEnabled?: boolean;
+   /** Random seed for reproducibility (-1 for random, default: -1) */
+   seed?: number;
++  /** Silero VAD tuning for runStreaming(). Ignored by run(). */
++  vad_params?: ParakeetVadParams;
+ }
+ 
+ /**
+@@ -56,6 +58,21 @@ export interface TranscriptionParakeetFiles {
+   eouDecoder?: string;
+   /** Absolute path to sortformer.onnx */
+   sortformer?: string;
++  /** Absolute path to silero_vad.onnx — required by runStreaming() */
++  vadModel?: string;
++}
++
++/**
++ * Silero VAD tuning parameters for streaming mode. Field names match
++ * whisper's vad_params for drop-in compatibility with SDK callers.
++ */
++export interface ParakeetVadParams {
++  threshold?: number;
++  min_silence_duration_ms?: number;
++  min_speech_duration_ms?: number;
++  max_speech_duration_s?: number;
++  speech_pad_ms?: number;
++  samples_overlap?: number;
+ }
+ 
+ /**
+@@ -129,6 +146,20 @@ export interface Addon {
+   stop(): Promise<void>;
+   reload(config: ParakeetConfig): Promise<void>;
+   destroyInstance(): Promise<void>;
++  /** Open a Silero-VAD driven streaming session. */
++  startStreaming(config: {
++    vadModelPath: string;
++    vadThreshold?: number;
++    minSilenceDurationMs?: number;
++    minSpeechDurationMs?: number;
++    maxSpeechDurationS?: number;
++    speechPadMs?: number;
++    samplesOverlap?: number;
++  }): void;
++  /** Push a Float32Array of PCM samples into the active streaming session. */
++  appendStreamingAudio(data: { input: Float32Array }): boolean;
++  /** Close the active streaming session and flush any buffered audio. */
++  endStreaming(): boolean;
+ }
+ 
+ /**
+@@ -171,6 +202,16 @@ declare class TranscriptionParakeet {
+     audioStream: AsyncIterable<Buffer>
+   ): Promise<QvacResponse<TranscriptionParakeet.ParakeetRunOutput>>;
+ 
++  /**
++   * Run a live streaming transcription session backed by Silero VAD.
++   * Requires `files.vadModel` at construction time. The caller drives the
++   * PCM feed via the AsyncIterable and each VAD-detected segment is
++   * transcribed by the Parakeet offline recognizer.
++   */
++  runStreaming(
++    audioStream: AsyncIterable<Buffer>
++  ): Promise<QvacResponse<TranscriptionParakeet.ParakeetRunOutput>>;
++
+   /**
+    * Reload the model with new configuration parameters.
+    * @param newConfig - New configuration parameters
+diff --git a/packages/qvac-lib-infer-parakeet/index.js b/packages/qvac-lib-infer-parakeet/index.js
+index eafe3e1..262b6c2 100644
+--- a/packages/qvac-lib-infer-parakeet/index.js
++++ b/packages/qvac-lib-infer-parakeet/index.js
+@@ -112,9 +112,12 @@ class TranscriptionParakeet {
+       tokenizerPath: files.tokenizer,
+       eouEncoderPath: files.eouEncoder,
+       eouDecoderPath: files.eouDecoder,
+-      sortformerPath: files.sortformer
++      sortformerPath: files.sortformer,
++      vadModelPath: files.vadModel
+     }
+ 
++    this._files = this._config
++
+     this.params = config.parakeetConfig || {}
+     this._job = createJobHandler({ cancel: () => this.addon?.cancel() })
+ 
+@@ -199,6 +202,7 @@ class TranscriptionParakeet {
+     if (this._config.eouEncoderPath) configurationParams.eouEncoderPath = this._config.eouEncoderPath
+     if (this._config.eouDecoderPath) configurationParams.eouDecoderPath = this._config.eouDecoderPath
+     if (this._config.sortformerPath) configurationParams.sortformerPath = this._config.sortformerPath
++    if (this._config.vadModelPath) configurationParams.vadModelPath = this._config.vadModelPath
+ 
+     return configurationParams
+   }
+@@ -227,6 +231,25 @@ class TranscriptionParakeet {
+     return await this._runInternal(input)
+   }
+ 
++  /**
++   * Simulated-streaming transcription driven by Silero VAD in the native
++   * addon. Mirrors the whisper `runStreaming` surface: the caller feeds
++   * PCM chunks via the returned response stream, each detected segment
++   * runs through the Parakeet recognizer, and per-segment transcripts are
++   * emitted on the response iterator.
++   *
++   * @param {AsyncIterable<Buffer>|Uint8Array|Float32Array} audioStream
++   * @returns {Promise<QvacResponse>}
++   */
++  async runStreaming (audioStream) {
++    if (this.exclusiveRun) {
++      return await this._withExclusiveRun(() =>
++        this._runInternal(audioStream, { streaming: true })
++      )
++    }
++    return await this._runInternal(audioStream, { streaming: true })
++  }
++
+   async _withExclusiveRun (fn) {
+     const prev = this._runQueueWaiter || Promise.resolve()
+     let release
+@@ -257,16 +280,73 @@ class TranscriptionParakeet {
+    * @param {AsyncIterable<Buffer>} audioStream - Stream of audio data (16kHz mono, Float32 or s16le)
+    * @returns {Promise<QvacResponse>} - Response object for tracking the transcription job
+    */
+-  async _runInternal (audioStream) {
++  async _runInternal (audioStream, opts = {}) {
++    const normalized = this._normalizeAudioStream(audioStream)
++
++    if (opts.streaming) {
++      return await this._runStreaming(normalized)
++    }
++
+     const response = this._job.start()
+ 
+-    this._handleAudioStream(this._normalizeAudioStream(audioStream)).catch((error) => {
++    this._handleAudioStream(normalized).catch((error) => {
+       this._job.fail(error)
+     })
+ 
+     return response
+   }
+ 
++  /**
++   * Run VAD-driven streaming transcription. Requires vadModelPath to be set.
++   * @param {AsyncIterable<Buffer>} audioStream
++   * @returns {Promise<QvacResponse>}
++   * @private
++   */
++  async _runStreaming (audioStream) {
++    const vadModelPath = this._config.vadModelPath
++    if (!vadModelPath) {
++      throw new QvacErrorAddonParakeet(ERR_CODES.MODEL_NOT_FOUND, 'vadModelPath is required for streaming')
++    }
++
++    const vadParams = this.params?.vad_params || {}
++    this.addon.startStreaming({
++      vadModelPath,
++      vadThreshold: vadParams.threshold || 0.5,
++      minSilenceDurationMs: vadParams.min_silence_duration_ms || 500,
++      minSpeechDurationMs: vadParams.min_speech_duration_ms || 250,
++      maxSpeechDurationS: vadParams.max_speech_duration_s || 30,
++      speechPadMs: vadParams.speech_pad_ms || 30,
++      samplesOverlap: vadParams.samples_overlap || 0.1
++    })
++
++    const response = this._job.start()
++
++    this._handleStreamingAudio(audioStream).catch((error) => {
++      this._job.fail(error)
++    })
++
++    return response
++  }
++
++  async _handleStreamingAudio (audioStream) {
++    this.logger.debug('Start handling streaming audio')
++    for await (const chunk of audioStream) {
++      let audioData
++      if (chunk instanceof Float32Array) {
++        audioData = chunk
++      } else {
++        const int16Data = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2)
++        audioData = new Float32Array(int16Data.length)
++        for (let i = 0; i < int16Data.length; i++) {
++          audioData[i] = int16Data[i] / 32768.0
++        }
++      }
++      this.addon.appendStreamingAudio({ input: audioData })
++    }
++    this.logger.debug('Ending streaming session')
++    this.addon.endStreaming()
++  }
++
+   /**
+    * Handle incoming audio stream
+    * @param {AsyncIterable<Buffer>} audioStream - Audio data stream
+diff --git a/packages/qvac-lib-infer-parakeet/parakeet.js b/packages/qvac-lib-infer-parakeet/parakeet.js
+index 4da2ccd..055517e 100644
+--- a/packages/qvac-lib-infer-parakeet/parakeet.js
++++ b/packages/qvac-lib-infer-parakeet/parakeet.js
+@@ -266,6 +266,58 @@ class ParakeetInterface {
+     }
+   }
+ 
++  /**
++   * Start a live streaming transcription session.
++   *
++   * Silero VAD drives endpointing in the native addon (StreamingProcessor);
++   * each detected segment is forwarded to the Parakeet offline recognizer
++   * and its transcript is emitted via the normal Output callback, matching
++   * the whisper streaming surface so the SDK plugin layer stays symmetric.
++   *
++   * @param {Object} config
++   * @param {string} config.vadModelPath - absolute path to silero_vad.onnx
++   * @param {number} [config.vadThreshold=0.5]
++   * @param {number} [config.minSilenceDurationMs=500]
++   * @param {number} [config.minSpeechDurationMs=250]
++   * @param {number} [config.maxSpeechDurationS=30]
++   * @param {number} [config.speechPadMs=30]
++   * @param {number} [config.samplesOverlap=0.1]
++   */
++  startStreaming (config = {}) {
++    const currentJobId = this._nextJobId
++    const accepted = this._binding.startStreaming(this._handle, {
++      ...config,
++      jobId: currentJobId
++    })
++    if (!accepted) {
++      throw new Error('Failed to start streaming session')
++    }
++    this._activeJobId = currentJobId
++    this._nextJobId = nextSafeId(this._nextJobId)
++    this._setState(state.PROCESSING)
++  }
++
++  /**
++   * Append a PCM chunk to an active streaming session.
++   * @param {{ input: Float32Array|ArrayBuffer|Uint8Array }} data
++   * @returns {boolean} false when the session rejected the chunk (e.g. empty)
++   */
++  appendStreamingAudio (data) {
++    const normalized = this._normalizeAudioInput(data?.input ?? data?.data)
++    return this._binding.appendStreamingAudio(this._handle, {
++      type: 'audio',
++      input: normalized
++    })
++  }
++
++  /**
++   * Close the active streaming session. Any buffered audio is drained
++   * through the VAD + recognizer before the job ends.
++   */
++  endStreaming () {
++    return this._binding.endStreaming(this._handle)
++  }
++
+   /**
+    * Get current model status
+    * @returns {Promise<string>} - 'loading', 'listening', 'processing', 'idle', 'paused', 'stopped'
+diff --git a/packages/sdk/schemas/transcription-config.ts b/packages/sdk/schemas/transcription-config.ts
+index 1d806f9..e2b0325 100644
+--- a/packages/sdk/schemas/transcription-config.ts
++++ b/packages/sdk/schemas/transcription-config.ts
+@@ -92,6 +92,7 @@ export const parakeetRuntimeConfigSchema = z.object({
+   channels: z.number().int().optional(),
+   captionEnabled: z.boolean().optional(),
+   timestampsEnabled: z.boolean().optional(),
++  vad_params: vadParamsSchema,
+ });
+ 
+ export const parakeetConfigSchema = parakeetRuntimeConfigSchema.extend({
+@@ -105,6 +106,8 @@ export const parakeetConfigSchema = parakeetRuntimeConfigSchema.extend({
+   parakeetTokenizerSrc: modelSrcInputSchema.optional(),
+   // Sortformer source
+   parakeetSortformerSrc: modelSrcInputSchema.optional(),
++  // Silero VAD source — required only for runStreaming / transcribeStream
++  vadModelSrc: modelSrcInputSchema.optional(),
+ });
+ 
+ export type ParakeetRuntimeConfig = z.infer<typeof parakeetRuntimeConfigSchema>;
+diff --git a/packages/sdk/server/bare/plugins/parakeet-transcription/plugin.ts b/packages/sdk/server/bare/plugins/parakeet-transcription/plugin.ts
+index 2850344..66dae23 100644
+--- a/packages/sdk/server/bare/plugins/parakeet-transcription/plugin.ts
++++ b/packages/sdk/server/bare/plugins/parakeet-transcription/plugin.ts
+@@ -7,8 +7,11 @@ import TranscriptionParakeet, {
+ import {
+   definePlugin,
+   defineHandler,
++  defineDuplexHandler,
+   transcribeRequestSchema,
+   transcribeResponseSchema,
++  transcribeStreamRequestSchema,
++  transcribeStreamResponseSchema,
+   ModelType,
+   parakeetConfigSchema,
+   ADDON_PARAKEET,
+@@ -25,7 +28,7 @@ import {
+   ParakeetArtifactsRequiredError,
+ } from "@/utils/errors-server";
+ import FilesystemDL from "@qvac/dl-filesystem";
+-import { transcribe } from "@/server/bare/ops/transcribe";
++import { transcribe, transcribeStream } from "@/server/bare/ops/transcribe";
+ import { attachModelExecutionMs } from "@/profiling/model-execution";
+ 
+ type ParakeetModelConfig = {
+@@ -48,6 +51,16 @@ type ParakeetModelConfig = {
+   parakeetTokenizerSrc?: ModelSrcInput;
+   // Sortformer
+   parakeetSortformerSrc?: ModelSrcInput;
++  // Silero VAD — streaming only
++  vadModelSrc?: ModelSrcInput;
++  vad_params?: {
++    threshold?: number;
++    min_silence_duration_ms?: number;
++    min_speech_duration_ms?: number;
++    max_speech_duration_s?: number;
++    speech_pad_ms?: number;
++    samples_overlap?: number;
++  };
+ };
+ 
+ 
+@@ -189,6 +202,7 @@ function createParakeetModel(
+       channels: config.channels,
+       captionEnabled: config.captionEnabled,
+       timestampsEnabled: config.timestampsEnabled,
++      ...(config.vad_params && { vad_params: config.vad_params }),
+     } as ParakeetConfig,
+   };
+ 
+@@ -214,9 +228,27 @@ export const parakeetPlugin = definePlugin({
+   ): Promise<ResolveResult<ParakeetModelConfig>> {
+     const modelType = cfg.modelType ?? "tdt";
+ 
+-    if (modelType === "ctc") return resolveCtcConfig(cfg, ctx);
+-    if (modelType === "sortformer") return resolveSortformerConfig(cfg, ctx);
+-    return resolveTdtConfig(cfg, ctx);
++    let base: ResolveResult<ParakeetModelConfig>;
++    if (modelType === "ctc") base = await resolveCtcConfig(cfg, ctx);
++    else if (modelType === "sortformer")
++      base = await resolveSortformerConfig(cfg, ctx);
++    else base = await resolveTdtConfig(cfg, ctx);
++
++    // Silero VAD is orthogonal to the recognizer variant: resolve it once
++    // and attach the path to the artifacts so createParakeetModel can pass
++    // it through to the native addon.
++    if (cfg.vadModelSrc) {
++      const vadModelPath = await ctx.resolveModelPath(cfg.vadModelSrc);
++      base = {
++        ...base,
++        artifacts: {
++          ...(base.artifacts ?? {}),
++          ...(vadModelPath !== undefined && { vadModel: vadModelPath }),
++        },
++      };
++    }
++
++    return base;
+   },
+ 
+   createModel(params: CreateModelParams): PluginModelResult {
+@@ -264,6 +296,31 @@ export const parakeetPlugin = definePlugin({
+         }
+       },
+     }),
++
++    transcribeStream: defineDuplexHandler({
++      requestSchema: transcribeStreamRequestSchema,
++      responseSchema: transcribeStreamResponseSchema,
++      streaming: true,
++      duplex: true,
++
++      handler: async function* (request, inputStream) {
++        for await (const text of transcribeStream(
++          request.modelId,
++          inputStream,
++          request.prompt,
++        )) {
++          yield {
++            type: "transcribeStream" as const,
++            text,
++          };
++        }
++        yield {
++          type: "transcribeStream" as const,
++          text: "",
++          done: true,
++        };
++      },
++    }),
+   },
+ 
+   logging: {
+-- 
+2.52.0.windows.1
+

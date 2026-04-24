@@ -1,5 +1,5 @@
 diff --git a/node_modules/@qvac/sdk/dist/client/rpc/node-rpc-client.js b/node_modules/@qvac/sdk/dist/client/rpc/node-rpc-client.js
-index fec818b..3275c9b 100644
+index 825a161..6713c37 100644
 --- a/node_modules/@qvac/sdk/dist/client/rpc/node-rpc-client.js
 +++ b/node_modules/@qvac/sdk/dist/client/rpc/node-rpc-client.js
 @@ -189,7 +189,8 @@ async function ensureRPC() {
@@ -12,3 +12,47 @@ index fec818b..3275c9b 100644
              });
          });
      });
+diff --git a/node_modules/@qvac/sdk/dist/server/bare/plugins/parakeet-transcription/plugin.js b/node_modules/@qvac/sdk/dist/server/bare/plugins/parakeet-transcription/plugin.js
+index 6164d5a..448be67 100644
+--- a/node_modules/@qvac/sdk/dist/server/bare/plugins/parakeet-transcription/plugin.js
++++ b/node_modules/@qvac/sdk/dist/server/bare/plugins/parakeet-transcription/plugin.js
+@@ -1,11 +1,11 @@
+ import parakeetAddonLogging from "@qvac/transcription-parakeet/addonLogging.js";
+ import TranscriptionParakeet, {} from "@qvac/transcription-parakeet";
+-import { definePlugin, defineHandler, transcribeRequestSchema, transcribeResponseSchema, ModelType, parakeetConfigSchema, ADDON_PARAKEET, } from "../../../../schemas/index.js";
++import { definePlugin, defineHandler, defineDuplexHandler, transcribeRequestSchema, transcribeResponseSchema, transcribeStreamRequestSchema, transcribeStreamResponseSchema, ModelType, parakeetConfigSchema, ADDON_PARAKEET, } from "../../../../schemas/index.js";
+ import { createStreamLogger, registerAddonLogger } from "../../../../logging/index.js";
+ import { parseModelPath } from "../../../utils/index.js";
+ import { ModelLoadFailedError, ParakeetArtifactsRequiredError, } from "../../../../utils/errors-server.js";
+ import FilesystemDL from "@qvac/dl-filesystem";
+-import { transcribe } from "../../ops/transcribe.js";
++import { transcribe, transcribeStream } from "../../ops/transcribe.js";
+ import { attachModelExecutionMs } from "../../../../profiling/model-execution.js";
+ async function resolveTdtConfig(cfg, ctx) {
+     const { parakeetEncoderSrc, parakeetEncoderDataSrc, parakeetDecoderSrc, parakeetVocabSrc, parakeetPreprocessorSrc, } = cfg;
+@@ -158,6 +158,25 @@ export const parakeetPlugin = definePlugin({
+                 }
+             },
+         }),
++        transcribeStream: defineDuplexHandler({
++            requestSchema: transcribeStreamRequestSchema,
++            responseSchema: transcribeStreamResponseSchema,
++            streaming: true,
++            duplex: true,
++            handler: async function* (request, inputStream) {
++                for await (const text of transcribeStream(request.modelId, inputStream, request.prompt)) {
++                    yield {
++                        type: "transcribeStream",
++                        text,
++                    };
++                }
++                yield {
++                    type: "transcribeStream",
++                    text: "",
++                    done: true,
++                };
++            },
++        }),
+     },
+     logging: {
+         module: parakeetAddonLogging,

@@ -54,7 +54,8 @@
       ],
       "expo-router",
       "expo-sqlite",
-      "@qvac/sdk/expo-plugin"
+      "@qvac/sdk/expo-plugin",
+      "expo-audio"
     ]
   }
 }

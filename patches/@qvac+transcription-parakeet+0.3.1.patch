@@ -1,0 +1,51 @@
+diff --git a/node_modules/@qvac/transcription-parakeet/index.d.ts b/node_modules/@qvac/transcription-parakeet/index.d.ts
+index 45b5806..58df707 100644
+--- a/node_modules/@qvac/transcription-parakeet/index.d.ts
++++ b/node_modules/@qvac/transcription-parakeet/index.d.ts
+@@ -171,6 +171,15 @@ declare class TranscriptionParakeet {
+     audioStream: AsyncIterable<Buffer>
+   ): Promise<QvacResponse<TranscriptionParakeet.ParakeetRunOutput>>;
+ 
++  /**
++   * Run simulated-streaming transcription on a live PCM stream.
++   * Alias of run() — exposed separately so the SDK server can detect
++   * streaming support via `hasRunStreaming()`.
++   */
++  runStreaming(
++    audioStream: AsyncIterable<Buffer>
++  ): Promise<QvacResponse<TranscriptionParakeet.ParakeetRunOutput>>;
++
+   /**
+    * Reload the model with new configuration parameters.
+    * @param newConfig - New configuration parameters
+diff --git a/node_modules/@qvac/transcription-parakeet/index.js b/node_modules/@qvac/transcription-parakeet/index.js
+index eafe3e1..37b7c0e 100644
+--- a/node_modules/@qvac/transcription-parakeet/index.js
++++ b/node_modules/@qvac/transcription-parakeet/index.js
+@@ -227,6 +227,26 @@ class TranscriptionParakeet {
+     return await this._runInternal(input)
+   }
+ 
++  /**
++   * Run simulated-streaming transcription on a live PCM input stream.
++   *
++   * Semantically identical to run(): the native addon already consumes
++   * chunks incrementally via append({type:'audio'}) and emits Output
++   * events as segments become available, so the QvacResponse returned
++   * here yields partial segments during iteration and terminates when
++   * the caller-provided AsyncIterable completes (END_OF_INPUT is sent
++   * on drain).
++   *
++   * Exposed as a distinct method so the SDK server can detect streaming
++   * support (see transcribeStream op which requires `runStreaming`).
++   *
++   * @param {AsyncIterable<Buffer>} audioStream - 16 kHz mono PCM (s16le or Float32)
++   * @returns {Promise<QvacResponse>} streaming response
++   */
++  async runStreaming (audioStream) {
++    return await this.run(audioStream)
++  }
++
+   async _withExclusiveRun (fn) {
+     const prev = this._runQueueWaiter || Promise.resolve()
+     let release

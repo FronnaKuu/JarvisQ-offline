@@ -1,27 +1,34 @@
 // ---- Expo Audio Player (Mobile) ------------------------------------------
-// Implements IAudioPlayer using expo-av for iOS and Android.
+// Implements IAudioPlayer using expo-audio for iOS and Android.
 //
 // Strategy: qvac TTS delivers Float32 PCM chunks per clause.
 //   1. Collect all chunks for one clause
-//   2. Encode as WAV in memory
-//   3. Write to a temporary file (expo-file-system)
-//   4. Load & play with expo-av Sound
-//   5. Unload and delete the temp file when done
+//   2. Encode as WAV in memory, write to a temp file
+//   3. Feed the file to a single long-lived AudioPlayer via replace()
+//   4. Wait for didJustFinish, then fire-and-forget cleanup of the WAV
+//
+// Why expo-audio instead of expo-av: expo-av allocates a fresh ExoPlayer +
+// AudioTrack per Sound.createAsync and releases it on unloadAsync — the
+// re-init cycle inserts ~1s of silence between clauses (audible stutter).
+// expo-audio exposes a persistent AudioPlayer whose source can be swapped
+// via replace() without tearing down the underlying native pipeline.
 
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import type { AudioPlayer, AudioStatus } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import type { IAudioPlayer } from '@core/ports/IAudioPlayer';
 
 const TEMP_PREFIX = 'tts_';
-// Android ExoPlayer drops a handful of samples during start-up; prepending a
-// short silent lead-in ensures the actual first phoneme is not clipped.
+// Android low-level audio drops a handful of samples on pipeline start-up;
+// a short silent lead-in ensures the first phoneme is not clipped.
 const LEAD_IN_MS = 80;
 
 export class ExpoAudioPlayer implements IAudioPlayer {
   private chunks: Float32Array[] = [];
   private sampleRate = 44100;
-  private currentSound: Audio.Sound | null = null;
-  private tempUri: string | null = null;
+  private player: AudioPlayer | null = null;
+  private audioModeConfigured = false;
+  private pendingTempUri: string | null = null;
   private stopped = false;
 
   addChunk(pcm: Float32Array, sampleRate: number): void {
@@ -45,45 +52,53 @@ export class ExpoAudioPlayer implements IAudioPlayer {
     await FileSystem.writeAsStringAsync(tempUri, b64, {
       encoding: FileSystem.EncodingType.Base64,
     });
-    this.tempUri = tempUri;
 
     if (this.stopped) {
-      await this.cleanup();
+      void this.deleteFile(tempUri);
       return;
     }
 
-    // Audio mode is set once at bootstrap. Avoid flipping allowsRecordingIOS
-    // per clause — that churn was correlated with first-word cuts.
+    await this.ensureAudioMode();
+    const player = this.ensurePlayer();
 
-    const { sound } = await Audio.Sound.createAsync(
-      { uri: tempUri },
-      { shouldPlay: true, volume: 1.0 },
-    );
-    this.currentSound = sound;
+    // Swap source without destroying the native pipeline — this is the
+    // difference from expo-av Sound.createAsync/unloadAsync.
+    player.replace({ uri: tempUri });
+
+    // Cleanup previous clause's file now that the player has moved on.
+    const previousUri = this.pendingTempUri;
+    this.pendingTempUri = tempUri;
+    if (previousUri) {
+      void this.deleteFile(previousUri);
+    }
 
     if (this.stopped) {
-      await this.cleanup();
       return;
     }
 
-    // Wait for playback to finish. We resolve ONLY on didJustFinish — earlier
-    // heuristics (resolve on !isPlaying after start, or on !isLoaded) caused
-    // the next clause's cleanup() → unloadAsync to interrupt expo-av mid-word
-    // whenever ExoPlayer reported a transient pause. didJustFinish is emitted
-    // reliably at end-of-stream on both Android and iOS.
-    await new Promise<void>((resolve) => {
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) resolve();
-      });
-    });
+    player.play();
 
-    await this.cleanup();
+    // Wait for didJustFinish. Safety net: hard timeout of clipDuration + 1s
+    // so a missed event doesn't deadlock the drain.
+    const durationMs = (padded.length / this.sampleRate) * 1000 + 1000;
+    await this.waitForFinish(player, durationMs);
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
     this.chunks = [];
-    await this.cleanup();
+    if (this.player) {
+      try {
+        this.player.pause();
+      } catch {
+        // ignore — player may already be idle
+      }
+    }
+    if (this.pendingTempUri) {
+      const uri = this.pendingTempUri;
+      this.pendingTempUri = null;
+      void this.deleteFile(uri);
+    }
   }
 
   reset(): void {
@@ -93,23 +108,52 @@ export class ExpoAudioPlayer implements IAudioPlayer {
 
   // ---- Private -----------------------------------------------------------
 
-  private async cleanup(): Promise<void> {
-    if (this.currentSound) {
-      try {
-        await this.currentSound.stopAsync();
-        await this.currentSound.unloadAsync();
-      } catch {
-        // ignore cleanup errors
-      }
-      this.currentSound = null;
-    }
-    if (this.tempUri) {
-      try {
-        await FileSystem.deleteAsync(this.tempUri, { idempotent: true });
-      } catch {
-        // ignore
-      }
-      this.tempUri = null;
+  private async ensureAudioMode(): Promise<void> {
+    if (this.audioModeConfigured) return;
+    // Called once per player lifetime — expo-av equivalent was invoked per
+    // clause, triggering setMode/setSpeakerphoneOn every playback.
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+    });
+    this.audioModeConfigured = true;
+  }
+
+  private ensurePlayer(): AudioPlayer {
+    if (this.player) return this.player;
+    // Null source is allowed; replace() supplies the first clip.
+    this.player = createAudioPlayer(null, { updateInterval: 500 });
+    return this.player;
+  }
+
+  private waitForFinish(player: AudioPlayer, timeoutMs: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        subscription.remove();
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(settle, timeoutMs);
+      const subscription = player.addListener(
+        'playbackStatusUpdate',
+        (status: AudioStatus) => {
+          if (status.didJustFinish) {
+            settle();
+          }
+        },
+      );
+    });
+  }
+
+  private async deleteFile(uri: string): Promise<void> {
+    try {
+      await FileSystem.deleteAsync(uri, { idempotent: true });
+    } catch {
+      // ignore cleanup errors — temp files age out of cacheDirectory anyway
     }
   }
 
