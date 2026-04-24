@@ -82,7 +82,7 @@ export const AppConfig = {
      * ignores vadModelPath and downloading the ~2 MB VAD model is wasted
      * bandwidth until the new .bare is in place.
      */
-    parakeetStreamingEnabled: false,
+    parakeetStreamingEnabled: true,
   },
 
   // LLM configuration

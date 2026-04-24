@@ -1,4 +1,4 @@
-From 898512225689615847ac25d52720380518e7eb4a Mon Sep 17 00:00:00 2001
+From 3db369cb4ae5c72b9de6bb5adc74aefc21ea5291 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 24 Apr 2026 12:00:24 +0200
 Subject: [PATCH] feat(parakeet): Silero VAD simulated streaming (parity with
