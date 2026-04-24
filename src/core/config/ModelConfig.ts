@@ -80,6 +80,7 @@ import { AppConfig } from './AppConfig';
 import {
   PARAKEET_HTTP,
   QWEN3_HTTP,
+  SILERO_VAD_HTTP,
   SUPERTONIC_HTTP,
   WHISPER_HTTP,
 } from './HttpModelSources';
@@ -213,6 +214,9 @@ export const STT_PROFILES: Record<string, SttProfile> = {
       decoderSrc: PARAKEET_TDT_DECODER_INT8,
       preprocessorSrc: PARAKEET_TDT_PREPROCESSOR_INT8,
       vocabSrc: PARAKEET_TDT_VOCAB,
+      ...(AppConfig.stt.parakeetStreamingEnabled
+        ? { vadModelSrc: { src: SILERO_VAD_HTTP.vad } }
+        : {}),
       useGpu,
     }),
     buildHttpFallbackConfig: (useGpu, _language) => ({
@@ -222,6 +226,9 @@ export const STT_PROFILES: Record<string, SttProfile> = {
       decoderSrc: { src: PARAKEET_HTTP.decoderInt8 },
       preprocessorSrc: { src: PARAKEET_HTTP.preprocessor },
       vocabSrc: { src: PARAKEET_HTTP.vocab },
+      ...(AppConfig.stt.parakeetStreamingEnabled
+        ? { vadModelSrc: { src: SILERO_VAD_HTTP.vad } }
+        : {}),
       useGpu,
     }),
   },
@@ -238,6 +245,9 @@ export const STT_PROFILES: Record<string, SttProfile> = {
       decoderSrc: PARAKEET_TDT_DECODER_FP32,
       preprocessorSrc: PARAKEET_TDT_PREPROCESSOR_FP32,
       vocabSrc: PARAKEET_TDT_VOCAB,
+      ...(AppConfig.stt.parakeetStreamingEnabled
+        ? { vadModelSrc: { src: SILERO_VAD_HTTP.vad } }
+        : {}),
       useGpu,
     }),
     buildHttpFallbackConfig: (useGpu, _language) => ({
@@ -248,6 +258,9 @@ export const STT_PROFILES: Record<string, SttProfile> = {
       decoderSrc: { src: PARAKEET_HTTP.decoderFp32 },
       preprocessorSrc: { src: PARAKEET_HTTP.preprocessor },
       vocabSrc: { src: PARAKEET_HTTP.vocab },
+      ...(AppConfig.stt.parakeetStreamingEnabled
+        ? { vadModelSrc: { src: SILERO_VAD_HTTP.vad } }
+        : {}),
       useGpu,
     }),
   },

@@ -27,14 +27,12 @@ export async function bootstrapMobile(): Promise<void> {
     networkInfo: new FetchNetworkInfo(),
   });
 
-  // Set the audio mode once. Leaving allowsRecordingIOS=true also permits
-  // playback, so the recorder and player can share the same session without
-  // flipping it per call — flipping was visible in Android logs as repeated
-  // setMode / setSpeakerphoneOn churn and correlated with first-word cuts on
-  // TTS clauses. On iOS, playsInSilentModeIOS keeps playback audible even
-  // when the physical mute switch is engaged.
+  // Initialize in playback-only mode so the first TTS clip (e.g. a bootstrap
+  // notice) routes through the loud media stream, not MODE_IN_COMMUNICATION
+  // (which would play it through the earpiece at low volume). The recorder
+  // flips allowsRecordingIOS=true before capture; the player flips it back.
   await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
+    allowsRecordingIOS: false,
     playsInSilentModeIOS: true,
     staysActiveInBackground: false,
   }).catch(() => {});

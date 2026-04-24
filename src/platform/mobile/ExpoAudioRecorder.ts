@@ -77,10 +77,13 @@ export class ExpoAudioRecorder implements IAudioRecorder {
     if (this.state !== 'idle') return null;
 
     await Audio.requestPermissionsAsync();
-    // Audio mode is set once at bootstrap (bootstrapMobile) with
-    // allowsRecordingIOS=true. Not flipping it per record() call avoids
-    // Android audio-focus churn (setMode / setSpeakerphoneOn in logs) that
-    // correlates with first-word cuts on the following TTS clause.
+    // Flip audio mode to recording — the player flips it back for playback.
+    // Without this the recorder can't open the mic when the previous turn
+    // left the session in playback-only mode.
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+    });
 
     this.recording = new Audio.Recording();
     this.speechDetected = false;

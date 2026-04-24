@@ -34,6 +34,13 @@ export interface ParakeetSttLoadConfig {
   decoderSrc: { src: string };
   preprocessorSrc: { src: string };
   vocabSrc: { src: string };
+  /**
+   * Silero VAD ONNX model. Only consumed by the streaming path
+   * (transcribeStream duplex); the non-streaming transcribe() call
+   * ignores it. Resolved into vadModelPath by the SDK plugin and passed
+   * to the native addon's startStreaming().
+   */
+  vadModelSrc?: { src: string };
   /** 'tdt' (default) or 'ctc' */
   modelType: 'tdt' | 'ctc';
   useGpu: boolean;
@@ -155,6 +162,7 @@ function buildLoadModelArgs(config: SttLoadConfig): LoadModelArgs {
       parakeetDecoderSrc: config.decoderSrc,
       parakeetPreprocessorSrc: config.preprocessorSrc,
       parakeetVocabSrc: config.vocabSrc,
+      ...(config.vadModelSrc && { vadModelSrc: config.vadModelSrc }),
       useGPU: config.useGpu,
       ...(config.maxThreads !== undefined && { maxThreads: config.maxThreads }),
     },

@@ -26,6 +26,18 @@ export const PARAKEET_HTTP = {
   vocab: hfResolve(PARAKEET_REPO, PARAKEET_COMMIT, 'vocab.txt'),
 } as const;
 
+// ─── Silero VAD v5 (snakers4/silero-vad) ─────────────────────────────────
+// Used by parakeet streaming (transcribeStream duplex) to segment live PCM
+// before invoking the offline recognizer on each detected speech segment.
+// The ONNX artifact is ~2 MB; pinned to a stable commit.
+
+const SILERO_VAD_REPO = 'onnx-community/silero-vad';
+const SILERO_VAD_COMMIT = 'main';
+
+export const SILERO_VAD_HTTP = {
+  vad: hfResolve(SILERO_VAD_REPO, SILERO_VAD_COMMIT, 'onnx/model.onnx'),
+} as const;
+
 // ─── Qwen3 1.7B (unsloth/Qwen3-1.7B-GGUF) ──────────────────────────────────
 
 const QWEN3_1_7B_REPO = 'unsloth/Qwen3-1.7B-GGUF';

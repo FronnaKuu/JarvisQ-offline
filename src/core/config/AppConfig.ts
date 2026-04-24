@@ -72,6 +72,17 @@ export const AppConfig = {
     vadThreshold: 0.5,
     vadMinSpeechDurationMs: 200,
     vadMinSilenceDurationMs: 300,
+    /**
+     * Enables the parakeet streaming path: downloads silero_vad.onnx with
+     * the parakeet model and wires vadModelSrc into the parakeet SDK
+     * plugin so transcribeStream can invoke VAD-driven segmentation.
+     *
+     * Leave false until the parakeet native addon has been rebuilt with
+     * docs/qvac-patches/0001-*.patch applied — the stock 0.3.1 binary
+     * ignores vadModelPath and downloading the ~2 MB VAD model is wasted
+     * bandwidth until the new .bare is in place.
+     */
+    parakeetStreamingEnabled: false,
   },
 
   // LLM configuration

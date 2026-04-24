@@ -12,8 +12,27 @@ index 825a161..6713c37 100644
              });
          });
      });
+diff --git a/node_modules/@qvac/sdk/dist/schemas/transcription-config.js b/node_modules/@qvac/sdk/dist/schemas/transcription-config.js
+index 0009472..6c13cae 100644
+--- a/node_modules/@qvac/sdk/dist/schemas/transcription-config.js
++++ b/node_modules/@qvac/sdk/dist/schemas/transcription-config.js
+@@ -78,6 +78,7 @@ export const parakeetRuntimeConfigSchema = z.object({
+     channels: z.number().int().optional(),
+     captionEnabled: z.boolean().optional(),
+     timestampsEnabled: z.boolean().optional(),
++    vad_params: vadParamsSchema,
+ });
+ export const parakeetConfigSchema = parakeetRuntimeConfigSchema.extend({
+     // TDT sources
+@@ -90,4 +91,6 @@ export const parakeetConfigSchema = parakeetRuntimeConfigSchema.extend({
+     parakeetTokenizerSrc: modelSrcInputSchema.optional(),
+     // Sortformer source
+     parakeetSortformerSrc: modelSrcInputSchema.optional(),
++    // Silero VAD source — required only for runStreaming / transcribeStream
++    vadModelSrc: modelSrcInputSchema.optional(),
+ });
 diff --git a/node_modules/@qvac/sdk/dist/server/bare/plugins/parakeet-transcription/plugin.js b/node_modules/@qvac/sdk/dist/server/bare/plugins/parakeet-transcription/plugin.js
-index 6164d5a..448be67 100644
+index 6164d5a..1053093 100644
 --- a/node_modules/@qvac/sdk/dist/server/bare/plugins/parakeet-transcription/plugin.js
 +++ b/node_modules/@qvac/sdk/dist/server/bare/plugins/parakeet-transcription/plugin.js
 @@ -1,11 +1,11 @@
@@ -30,7 +49,46 @@ index 6164d5a..448be67 100644
  import { attachModelExecutionMs } from "../../../../profiling/model-execution.js";
  async function resolveTdtConfig(cfg, ctx) {
      const { parakeetEncoderSrc, parakeetEncoderDataSrc, parakeetDecoderSrc, parakeetVocabSrc, parakeetPreprocessorSrc, } = cfg;
-@@ -158,6 +158,25 @@ export const parakeetPlugin = definePlugin({
+@@ -94,6 +94,7 @@ function createParakeetModel(params, primaryFileKey) {
+             channels: config.channels,
+             captionEnabled: config.captionEnabled,
+             timestampsEnabled: config.timestampsEnabled,
++            ...(config.vad_params && { vad_params: config.vad_params }),
+         },
+     };
+     const model = new TranscriptionParakeet({
+@@ -111,11 +112,26 @@ export const parakeetPlugin = definePlugin({
+     skipPrimaryModelPathValidation: true,
+     async resolveConfig(cfg, ctx) {
+         const modelType = cfg.modelType ?? "tdt";
++        let base;
+         if (modelType === "ctc")
+-            return resolveCtcConfig(cfg, ctx);
+-        if (modelType === "sortformer")
+-            return resolveSortformerConfig(cfg, ctx);
+-        return resolveTdtConfig(cfg, ctx);
++            base = await resolveCtcConfig(cfg, ctx);
++        else if (modelType === "sortformer")
++            base = await resolveSortformerConfig(cfg, ctx);
++        else
++            base = await resolveTdtConfig(cfg, ctx);
++        // Silero VAD is orthogonal to the recognizer variant: resolve it once
++        // and attach to artifacts so createParakeetModel can forward it.
++        if (cfg.vadModelSrc) {
++            const vadModelPath = await ctx.resolveModelPath(cfg.vadModelSrc);
++            base = {
++                ...base,
++                artifacts: {
++                    ...(base.artifacts ?? {}),
++                    ...(vadModelPath !== undefined && { vadModel: vadModelPath }),
++                },
++            };
++        }
++        return base;
+     },
+     createModel(params) {
+         const modelType = (params.modelConfig ?? {}).modelType ?? "tdt";
+@@ -158,6 +174,25 @@ export const parakeetPlugin = definePlugin({
                  }
              },
          }),
