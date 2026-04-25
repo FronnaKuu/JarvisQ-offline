@@ -134,9 +134,9 @@ class SttServiceClass implements ISttService {
     if (!this.modelId) throw new Error('STT model not loaded');
 
     console.log('[transcribeLive] opening duplex session…');
-    const session = await (transcribeStream as unknown as (
+    const session = (await (transcribeStream as unknown as (
       params: { modelId: string },
-    ) => Promise<TranscribeStreamSession>)({ modelId: this.modelId });
+    ) => Promise<TranscribeStreamSession>)({ modelId: this.modelId })) as TranscribeStreamSession;
     console.log('[transcribeLive] duplex session open');
 
     let chunkCount = 0;
@@ -167,12 +167,17 @@ class SttServiceClass implements ISttService {
     })();
 
     let fullText = '';
+    let segmentCount = 0;
     try {
-      for await (const response of session) {
-        const text = response?.text;
-        if (!text) continue;
-        onSegment(text);
-        fullText += (fullText ? ' ' : '') + text.trim();
+      // The SDK duplex session iterator yields each segment as a plain string
+      // (see @qvac/sdk client transcribe.js → parseResponseLines/processLine).
+      // Empty strings and the terminal "done" marker are already filtered out.
+      for await (const segment of session as AsyncIterable<string>) {
+        if (!segment) continue;
+        segmentCount++;
+        console.log(`[transcribeLive] segment #${segmentCount} len=${segment.length}`);
+        onSegment(segment);
+        fullText += (fullText ? ' ' : '') + segment.trim();
       }
     } catch (err) {
       console.error('[transcribeLive] session iteration threw', err);
@@ -194,8 +199,13 @@ class SttServiceClass implements ISttService {
  * Minimal shape of the duplex session returned by @qvac/sdk transcribeStream
  * when called without audioChunk. We redeclare it here because the SDK
  * exposes it as an anonymous inline type.
+ *
+ * NOTE: the SDK's parseResponseLines unwraps server frames and yields each
+ * non-empty segment as a plain string (it returns null on the terminal
+ * "done" frame, which ends iteration). The async iterator is therefore
+ * over strings, not response objects.
  */
-interface TranscribeStreamSession extends AsyncIterable<{ text?: string; done?: boolean }> {
+interface TranscribeStreamSession extends AsyncIterable<string> {
   write(audioChunk: Uint8Array): void;
   end(): void;
   destroy?: () => void;

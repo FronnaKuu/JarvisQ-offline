@@ -202,7 +202,15 @@ export default function ConversationScreen() {
     if (phase === 'LISTENING') {
       // Explicit stop ends the hands-free session: no auto-rearm after.
       p.updateConfig({ handsFreeMode: false });
-      void p.stopListening();
+      // Dictation mode: tap-to-stop is a graceful "submit" — the live
+      // recorder is closed, the SDK streaming session drains, and the
+      // accumulated transcript proceeds to the LLM turn. Other modes treat
+      // an explicit stop as a hard cancel (no transcription consumed).
+      if (AppConfig.stt.parakeetStreamingEnabled) {
+        void p.commitListening();
+      } else {
+        void p.stopListening();
+      }
     } else if (phase === 'IDLE') {
       // Starting from IDLE enters a hands-free session — the mic will
       // reopen automatically after each turn (VAD-gated, so ambient noise

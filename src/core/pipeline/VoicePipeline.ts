@@ -167,6 +167,22 @@ export class VoicePipeline {
     await this.listen();
   }
 
+  /**
+   * Graceful end-of-input for dictation. Stops the live recorder so the SDK
+   * streaming session drains naturally (final segment + onSttFinal + LLM
+   * turn). Falls back to stopListening when no dictation turn is active so
+   * non-dictation callers still get cancel semantics by default.
+   */
+  async commitListening(): Promise<void> {
+    if (!this.liveRecorderHandle || !this.activeDictationPromise) {
+      await this.stopListening();
+      return;
+    }
+    await this.liveRecorderHandle.stop();
+    this.liveRecorderHandle = null;
+    await this.activeDictationPromise.catch(() => {});
+  }
+
   async stopListening(): Promise<void> {
     this.isCancelled = true;
     if (this.liveRecorderHandle) {

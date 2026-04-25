@@ -72,7 +72,7 @@ index 45b5806..97d40b8 100644
     * Reload the model with new configuration parameters.
     * @param newConfig - New configuration parameters
 diff --git a/node_modules/@qvac/transcription-parakeet/index.js b/node_modules/@qvac/transcription-parakeet/index.js
-index eafe3e1..0ac25ea 100644
+index eafe3e1..732fed3 100644
 --- a/node_modules/@qvac/transcription-parakeet/index.js
 +++ b/node_modules/@qvac/transcription-parakeet/index.js
 @@ -112,9 +112,12 @@ class TranscriptionParakeet {
@@ -123,7 +123,7 @@ index eafe3e1..0ac25ea 100644
    async _withExclusiveRun (fn) {
      const prev = this._runQueueWaiter || Promise.resolve()
      let release
-@@ -257,16 +280,83 @@ class TranscriptionParakeet {
+@@ -257,16 +280,90 @@ class TranscriptionParakeet {
     * @param {AsyncIterable<Buffer>} audioStream - Stream of audio data (16kHz mono, Float32 or s16le)
     * @returns {Promise<QvacResponse>} - Response object for tracking the transcription job
     */
@@ -185,7 +185,14 @@ index eafe3e1..0ac25ea 100644
 +        if (chunk instanceof Float32Array) {
 +          audioData = chunk
 +        } else {
-+          const int16Data = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2)
++          // Copy into a fresh Uint8Array so the underlying buffer starts at
++          // offset 0 — pear-rpc may hand us sliced Buffers whose byteOffset
++          // is odd, which makes `new Int16Array(chunk.buffer, chunk.byteOffset)`
++          // throw "start offset of Int16Array should be a multiple of 2".
++          const even = chunk.byteLength - (chunk.byteLength % 2)
++          const aligned = new Uint8Array(even)
++          aligned.set(new Uint8Array(chunk.buffer, chunk.byteOffset, even))
++          const int16Data = new Int16Array(aligned.buffer, 0, even / 2)
 +          audioData = new Float32Array(int16Data.length)
 +          for (let i = 0; i < int16Data.length; i++) {
 +            audioData[i] = int16Data[i] / 32768.0
@@ -338,5 +345,5 @@ index 3af0068..055517e 100644
          this._bufferedBytes = 0
          this._activeJobId = null
 diff --git a/node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/qvac__transcription-parakeet.bare b/node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/qvac__transcription-parakeet.bare
-index 5d3fda2..6e4c5f7 100644
+index 5d3fda2..afedfb6 100644
 Binary files a/node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/qvac__transcription-parakeet.bare and b/node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/qvac__transcription-parakeet.bare differ
