@@ -83,6 +83,58 @@ export const AppConfig = {
      * bandwidth until the new .bare is in place.
      */
     parakeetStreamingEnabled: true,
+    /**
+     * Grace period after the PCM input is closed (session.end()) before the
+     * SDK duplex iterator is force-destroyed. Some native streaming addons
+     * fail to emit a terminal "JobEnded" event when their input ends, which
+     * leaves the response iterator hanging. Bounded so the dictation commit
+     * always returns and the LLM turn fires.
+     */
+    streamDrainGraceMs: 5_000,
+    /**
+     * Silero VAD tuning for the parakeet streaming path. Modeled on the
+     * HearoPilot dictation profile (sherpa-onnx + parakeet-tdt-0.6b-v3-int8)
+     * which feels live because partials surface every ~1.5 s — not on the
+     * native addon's batch-style 30 s ceiling.
+     *
+     * Our addon's StreamingProcessor only runs Parakeet at VAD endpoints
+     * (not on partial buffers like HearoPilot's sherpa-onnx loop). Aggressive
+     * forced fake-endpoints (sub-2s) trigger Parakeet on near-silence cuts
+     * and the recognizer hallucinates filler tokens ("Yeah.", "No.") — a
+     * known TDT failure mode on short silent segments (sherpa-onnx#2918).
+     *
+     * Until the native StreamingProcessor learns true partial decoding, the
+     * safe profile is: trust VAD's natural endpointing for accuracy, keep
+     * a moderate ceiling so a continuous talker still sees periodic chunks,
+     * and rely on samplesOverlap to bridge cuts.
+     *
+     * - threshold: 0.5 keeps Silero's published sensitivity.
+     * - minSpeechDurationMs: 250 ms — drop ultra-short bursts (clicks).
+     * - minSilenceDurationMs: 300 ms — close on natural short pauses.
+     * - maxSpeechDurationS: 12 s — generous ceiling, partials drive UX.
+     * - speechPadMs: 100 ms — pad each cut so plosives aren't clipped.
+     * - samplesOverlap: 0.3 s — context carryover at endpoint commits.
+     * - partialDecodeIntervalMs: 1500 ms — mirrors HearoPilot's cadence.
+     *   The native StreamingProcessor re-runs Parakeet on the open
+     *   segment every 1.5 s of new audio, surfacing partials with
+     *   isPartial=true that the UI can replace.
+     */
+    streamingVad: {
+      threshold: 0.5,
+      minSpeechDurationMs: 250,
+      minSilenceDurationMs: 300,
+      maxSpeechDurationS: 12,
+      speechPadMs: 100,
+      samplesOverlap: 0.3,
+      partialDecodeIntervalMs: 1500,
+    },
+    /**
+     * Cap on ONNX Runtime threads for the parakeet recognizer. HearoPilot
+     * pins this to 2 deliberately to keep the LLM (llama.cpp) from being
+     * starved of big cores — the same logic applies here, since Qwen and
+     * Parakeet share the same physical CPU on Android.
+     */
+    parakeetMaxThreads: 2,
   },
 
   // LLM configuration

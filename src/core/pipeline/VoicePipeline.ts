@@ -300,12 +300,52 @@ export class VoicePipeline {
     this.liveRecorderHandle = handle;
 
     let finalText = '';
+    // The native StreamingProcessor now emits two kinds of segments:
+    //   - committed (isPartial=false) — final transcript for a closed VAD
+    //     range; appended to the running transcript and frozen.
+    //   - partial (isPartial=true) — in-progress revision of the still-open
+    //     VAD segment; replaces only the running tail and is dropped on the
+    //     next commit. The committed log + the latest partial together form
+    //     what the user sees as "live transcript".
+    let committedText = '';
+    let runningPartial = '';
+    const composeDisplay = () =>
+      committedText && runningPartial
+        ? `${committedText} ${runningPartial}`
+        : committedText || runningPartial;
     try {
       console.log('[dictation] opening transcribeStream…');
-      finalText = await this.stt.transcribeLive(handle.chunks(), (segment) => {
-        console.log('[dictation] partial segment', segment);
-        if (!this.isCancelled) this.callbacks.onSttPartial(segment);
-      });
+      finalText = await this.stt.transcribeLive(
+        handle.chunks(),
+        (segment, isPartial) => {
+          const cleaned = segment.trim();
+          if (!cleaned) return;
+          if (isPartial) {
+            runningPartial = cleaned;
+          } else {
+            committedText = committedText
+              ? `${committedText} ${cleaned}`
+              : cleaned;
+            // The freshly committed range supersedes the in-flight partial.
+            runningPartial = '';
+          }
+          const display = composeDisplay();
+          console.log(
+            `[dictation] segment ${isPartial ? '[partial]' : '[final]'} "${cleaned}" → display:`,
+            display,
+          );
+          if (!this.isCancelled) this.callbacks.onSttPartial(display);
+        },
+        { drainGraceMs: AppConfig.stt.streamDrainGraceMs },
+      );
+      // The SDK's session iterator may close via the drain timeout before
+      // the last final lands. committedText is the source of truth because
+      // it accumulates only confirmed (non-partial) segments observed by
+      // the JS side; runningPartial is dropped intentionally — partials
+      // are speculative and should never reach the LLM as the user's turn.
+      if (committedText.length > finalText.length) {
+        finalText = committedText;
+      }
       console.log('[dictation] stream closed, finalText=', finalText);
     } catch (err) {
       console.error('[dictation] transcribeLive error', err);

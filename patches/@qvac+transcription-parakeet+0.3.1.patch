@@ -1,5 +1,5 @@
 diff --git a/node_modules/@qvac/transcription-parakeet/index.d.ts b/node_modules/@qvac/transcription-parakeet/index.d.ts
-index 45b5806..97d40b8 100644
+index 45b5806..716d711 100644
 --- a/node_modules/@qvac/transcription-parakeet/index.d.ts
 +++ b/node_modules/@qvac/transcription-parakeet/index.d.ts
 @@ -28,6 +28,8 @@ export interface ParakeetConfig {
@@ -11,7 +11,7 @@ index 45b5806..97d40b8 100644
  }
  
  /**
-@@ -56,6 +58,21 @@ export interface TranscriptionParakeetFiles {
+@@ -56,6 +58,28 @@ export interface TranscriptionParakeetFiles {
    eouDecoder?: string;
    /** Absolute path to sortformer.onnx */
    sortformer?: string;
@@ -30,10 +30,17 @@ index 45b5806..97d40b8 100644
 +  max_speech_duration_s?: number;
 +  speech_pad_ms?: number;
 +  samples_overlap?: number;
++  /**
++   * Mid-segment partial decode cadence in milliseconds. While inside a still-
++   * open VAD speech segment, the recognizer is re-run every N ms of new
++   * audio and emits a transcript with isPartial=true. The next final commit
++   * (VAD endpoint) replaces it. 0 disables partials.
++   */
++  partial_decode_interval_ms?: number;
  }
  
  /**
-@@ -129,6 +146,20 @@ export interface Addon {
+@@ -129,6 +153,20 @@ export interface Addon {
    stop(): Promise<void>;
    reload(config: ParakeetConfig): Promise<void>;
    destroyInstance(): Promise<void>;
@@ -54,7 +61,7 @@ index 45b5806..97d40b8 100644
  }
  
  /**
-@@ -171,6 +202,16 @@ declare class TranscriptionParakeet {
+@@ -171,6 +209,16 @@ declare class TranscriptionParakeet {
      audioStream: AsyncIterable<Buffer>
    ): Promise<QvacResponse<TranscriptionParakeet.ParakeetRunOutput>>;
  
@@ -72,7 +79,7 @@ index 45b5806..97d40b8 100644
     * Reload the model with new configuration parameters.
     * @param newConfig - New configuration parameters
 diff --git a/node_modules/@qvac/transcription-parakeet/index.js b/node_modules/@qvac/transcription-parakeet/index.js
-index eafe3e1..732fed3 100644
+index eafe3e1..4cd13c4 100644
 --- a/node_modules/@qvac/transcription-parakeet/index.js
 +++ b/node_modules/@qvac/transcription-parakeet/index.js
 @@ -112,9 +112,12 @@ class TranscriptionParakeet {
@@ -123,7 +130,7 @@ index eafe3e1..732fed3 100644
    async _withExclusiveRun (fn) {
      const prev = this._runQueueWaiter || Promise.resolve()
      let release
-@@ -257,16 +280,90 @@ class TranscriptionParakeet {
+@@ -257,16 +280,94 @@ class TranscriptionParakeet {
     * @param {AsyncIterable<Buffer>} audioStream - Stream of audio data (16kHz mono, Float32 or s16le)
     * @returns {Promise<QvacResponse>} - Response object for tracking the transcription job
     */
@@ -135,16 +142,15 @@ index eafe3e1..732fed3 100644
 +      return await this._runStreaming(normalized)
 +    }
 +
-     const response = this._job.start()
- 
--    this._handleAudioStream(this._normalizeAudioStream(audioStream)).catch((error) => {
++    const response = this._job.start()
++
 +    this._handleAudioStream(normalized).catch((error) => {
-       this._job.fail(error)
-     })
- 
-     return response
-   }
- 
++      this._job.fail(error)
++    })
++
++    return response
++  }
++
 +  /**
 +   * Run VAD-driven streaming transcription. Requires vadModelPath to be set.
 +   * @param {AsyncIterable<Buffer>} audioStream
@@ -165,18 +171,24 @@ index eafe3e1..732fed3 100644
 +      minSpeechDurationMs: vadParams.min_speech_duration_ms || 250,
 +      maxSpeechDurationS: vadParams.max_speech_duration_s || 30,
 +      speechPadMs: vadParams.speech_pad_ms || 30,
-+      samplesOverlap: vadParams.samples_overlap || 0.1
++      samplesOverlap: vadParams.samples_overlap || 0.1,
++      // Mid-segment partial decode cadence. Pass through verbatim — 0 from
++      // JS disables partials and falls back to legacy final-only behavior.
++      ...(vadParams.partial_decode_interval_ms !== undefined && {
++        partialDecodeIntervalMs: vadParams.partial_decode_interval_ms
++      })
 +    })
 +
-+    const response = this._job.start()
-+
+     const response = this._job.start()
+ 
+-    this._handleAudioStream(this._normalizeAudioStream(audioStream)).catch((error) => {
 +    this._handleStreamingAudio(audioStream).catch((error) => {
-+      this._job.fail(error)
-+    })
-+
-+    return response
-+  }
-+
+       this._job.fail(error)
+     })
+ 
+     return response
+   }
+ 
 +  async _handleStreamingAudio (audioStream) {
 +    this.logger.debug('Start handling streaming audio')
 +    try {
@@ -201,9 +213,8 @@ index eafe3e1..732fed3 100644
 +        this.addon.appendStreamingAudio({ input: audioData })
 +      }
 +    } finally {
-+      // Always close the native streaming session even if the input stream
-+      // errors or is destroyed — leaking a streaming session blocks the
-+      // next startStreaming call with "Streaming session already active".
++      // Always close the native streaming session — leaking one blocks the
++      // next startStreaming() with "Streaming session already active".
 +      this.logger.debug('Ending streaming session')
 +      try {
 +        this.addon.endStreaming()
@@ -345,5 +356,5 @@ index 3af0068..055517e 100644
          this._bufferedBytes = 0
          this._activeJobId = null
 diff --git a/node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/qvac__transcription-parakeet.bare b/node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/qvac__transcription-parakeet.bare
-index 5d3fda2..afedfb6 100644
+index 5d3fda2..0353569 100644
 Binary files a/node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/qvac__transcription-parakeet.bare and b/node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/qvac__transcription-parakeet.bare differ

@@ -98,17 +98,19 @@ export class LivePcmRecorder {
     const stop = async (): Promise<void> => {
       if (stopped) return;
       stopped = true;
+      // Order matters: terminate the AsyncIterable BEFORE awaiting the
+      // native stop. AudioRecord.stop() may take dozens of ms (or hang) and
+      // any consumer waiting on chunks() would otherwise block the entire
+      // dictation commit drain behind it.
+      subscription?.remove?.();
+      while (waiters.length > 0) {
+        const w = waiters.shift();
+        w?.(null);
+      }
       try {
         await AudioRecord.stop();
       } catch {
         // ignore — native may complain if already stopped
-      }
-      // Unsubscribe from the data stream so late events don't queue indefinitely.
-      subscription?.remove?.();
-      // Wake any pending waiter so the AsyncIterable can terminate cleanly.
-      while (waiters.length > 0) {
-        const w = waiters.shift();
-        w?.(null);
       }
     };
 

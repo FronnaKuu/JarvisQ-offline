@@ -215,8 +215,12 @@ export const STT_PROFILES: Record<string, SttProfile> = {
       preprocessorSrc: PARAKEET_TDT_PREPROCESSOR_INT8,
       vocabSrc: PARAKEET_TDT_VOCAB,
       ...(AppConfig.stt.parakeetStreamingEnabled
-        ? { vadModelSrc: { src: SILERO_VAD_HTTP.vad } }
+        ? {
+            vadModelSrc: { src: SILERO_VAD_HTTP.vad },
+            streamingVadParams: AppConfig.stt.streamingVad,
+          }
         : {}),
+      maxThreads: AppConfig.stt.parakeetMaxThreads,
       useGpu,
     }),
     buildHttpFallbackConfig: (useGpu, _language) => ({
@@ -227,8 +231,12 @@ export const STT_PROFILES: Record<string, SttProfile> = {
       preprocessorSrc: { src: PARAKEET_HTTP.preprocessor },
       vocabSrc: { src: PARAKEET_HTTP.vocab },
       ...(AppConfig.stt.parakeetStreamingEnabled
-        ? { vadModelSrc: { src: SILERO_VAD_HTTP.vad } }
+        ? {
+            vadModelSrc: { src: SILERO_VAD_HTTP.vad },
+            streamingVadParams: AppConfig.stt.streamingVad,
+          }
         : {}),
+      maxThreads: AppConfig.stt.parakeetMaxThreads,
       useGpu,
     }),
   },
@@ -246,8 +254,12 @@ export const STT_PROFILES: Record<string, SttProfile> = {
       preprocessorSrc: PARAKEET_TDT_PREPROCESSOR_FP32,
       vocabSrc: PARAKEET_TDT_VOCAB,
       ...(AppConfig.stt.parakeetStreamingEnabled
-        ? { vadModelSrc: { src: SILERO_VAD_HTTP.vad } }
+        ? {
+            vadModelSrc: { src: SILERO_VAD_HTTP.vad },
+            streamingVadParams: AppConfig.stt.streamingVad,
+          }
         : {}),
+      maxThreads: AppConfig.stt.parakeetMaxThreads,
       useGpu,
     }),
     buildHttpFallbackConfig: (useGpu, _language) => ({
@@ -259,8 +271,12 @@ export const STT_PROFILES: Record<string, SttProfile> = {
       preprocessorSrc: { src: PARAKEET_HTTP.preprocessor },
       vocabSrc: { src: PARAKEET_HTTP.vocab },
       ...(AppConfig.stt.parakeetStreamingEnabled
-        ? { vadModelSrc: { src: SILERO_VAD_HTTP.vad } }
+        ? {
+            vadModelSrc: { src: SILERO_VAD_HTTP.vad },
+            streamingVadParams: AppConfig.stt.streamingVad,
+          }
         : {}),
+      maxThreads: AppConfig.stt.parakeetMaxThreads,
       useGpu,
     }),
   },

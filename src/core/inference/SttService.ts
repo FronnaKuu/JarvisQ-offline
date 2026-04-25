@@ -41,6 +41,28 @@ export interface ParakeetSttLoadConfig {
    * to the native addon's startStreaming().
    */
   vadModelSrc?: { src: string };
+  /**
+   * Silero VAD tuning for the live streaming path. Forwarded to the native
+   * addon via parakeetConfig.vad_params. Ignored when vadModelSrc is unset.
+   * Defaults inside the addon are biased toward batch use (long
+   * max_speech_duration_s, slow silence trigger) — overriding here is what
+   * gives the dictation UX short, frequent partials.
+   */
+  streamingVadParams?: {
+    threshold?: number;
+    minSilenceDurationMs?: number;
+    minSpeechDurationMs?: number;
+    maxSpeechDurationS?: number;
+    speechPadMs?: number;
+    samplesOverlap?: number;
+    /**
+     * Cadence (ms) at which the in-progress segment is re-decoded and
+     * emitted as a partial inside an open VAD range. 0 disables partials
+     * (legacy final-only behavior). See StreamingProcessor's
+     * partialDecodeIntervalSamples.
+     */
+    partialDecodeIntervalMs?: number;
+  };
   /** 'tdt' (default) or 'ctc' */
   modelType: 'tdt' | 'ctc';
   useGpu: boolean;
@@ -129,7 +151,8 @@ class SttServiceClass implements ISttService {
    */
   async transcribeLive(
     pcmStream: AsyncIterable<Uint8Array>,
-    onSegment: (text: string) => void,
+    onSegment: (text: string, isPartial: boolean) => void,
+    options: { drainGraceMs?: number } = {},
   ): Promise<string> {
     if (!this.modelId) throw new Error('STT model not loaded');
 
@@ -140,6 +163,7 @@ class SttServiceClass implements ISttService {
     console.log('[transcribeLive] duplex session open');
 
     let chunkCount = 0;
+    let drainTimer: ReturnType<typeof setTimeout> | null = null;
     // Pump PCM chunks into the duplex session in the background. The server
     // streams partial transcripts back through the session's AsyncIterable,
     // which we consume synchronously below.
@@ -163,28 +187,55 @@ class SttServiceClass implements ISttService {
       } finally {
         console.log(`[transcribeLive] stream drained, total chunks=${chunkCount}, calling session.end()`);
         session.end();
+        // Some native streaming addons (parakeet's StreamingProcessor on
+        // bare-kit) do not emit a terminal "JobEnded" frame when their
+        // input ends — the response iterator below would hang forever.
+        // Force-destroy the session after a bounded grace period so the
+        // dictation commit always resolves.
+        const grace = options.drainGraceMs;
+        if (grace !== undefined && grace > 0) {
+          drainTimer = setTimeout(() => {
+            console.warn(`[transcribeLive] drain grace ${grace}ms elapsed, destroying session`);
+            session.destroy?.();
+          }, grace);
+        }
       }
     })();
 
     let fullText = '';
     let segmentCount = 0;
     try {
-      // The SDK duplex session iterator yields each segment as a plain string
-      // (see @qvac/sdk client transcribe.js → parseResponseLines/processLine).
-      // Empty strings and the terminal "done" marker are already filtered out.
-      for await (const segment of session as AsyncIterable<string>) {
-        if (!segment) continue;
+      // The SDK duplex session iterator yields each segment as
+      // {text, isPartial}. isPartial=true means the recognizer is still
+      // revising the running utterance — the consumer should REPLACE the
+      // current running tail. isPartial=false (or absent) is the committed
+      // final for that audio range and should be appended to fullText.
+      for await (const segment of session as AsyncIterable<{
+        text: string;
+        isPartial: boolean;
+      }>) {
+        if (!segment || !segment.text) continue;
         segmentCount++;
-        console.log(`[transcribeLive] segment #${segmentCount} len=${segment.length}`);
-        onSegment(segment);
-        fullText += (fullText ? ' ' : '') + segment.trim();
+        const tag = segment.isPartial ? 'partial' : 'final';
+        console.log(
+          `[transcribeLive] segment #${segmentCount} [${tag}] len=${segment.text.length}`,
+        );
+        onSegment(segment.text, segment.isPartial === true);
+        if (!segment.isPartial) {
+          fullText += (fullText ? ' ' : '') + segment.text.trim();
+        }
       }
     } catch (err) {
       console.error('[transcribeLive] session iteration threw', err);
       session.destroy?.();
+      // Drain timeout no longer needed once we've abandoned the session.
+      if (drainTimer) clearTimeout(drainTimer);
       throw err;
+    } finally {
+      if (drainTimer) clearTimeout(drainTimer);
     }
     await pumpPromise;
+    console.log(`[transcribeLive] returning, segments=${segmentCount}, fullTextLen=${fullText.length}`);
     return fullText;
   }
 
@@ -238,6 +289,37 @@ function buildLoadModelArgs(config: SttLoadConfig): LoadModelArgs {
   }
 
   // Parakeet (TDT or CTC)
+  // Translate Silero VAD tuning from camelCase (TS surface) to the snake_case
+  // shape the parakeet addon's `vad_params` consumes. Only emit fields the
+  // caller actually set so the native side keeps its defaults for the rest.
+  const vadParams =
+    config.vadModelSrc && config.streamingVadParams
+      ? {
+          ...(config.streamingVadParams.threshold !== undefined && {
+            threshold: config.streamingVadParams.threshold,
+          }),
+          ...(config.streamingVadParams.minSilenceDurationMs !== undefined && {
+            min_silence_duration_ms: config.streamingVadParams.minSilenceDurationMs,
+          }),
+          ...(config.streamingVadParams.minSpeechDurationMs !== undefined && {
+            min_speech_duration_ms: config.streamingVadParams.minSpeechDurationMs,
+          }),
+          ...(config.streamingVadParams.maxSpeechDurationS !== undefined && {
+            max_speech_duration_s: config.streamingVadParams.maxSpeechDurationS,
+          }),
+          ...(config.streamingVadParams.speechPadMs !== undefined && {
+            speech_pad_ms: config.streamingVadParams.speechPadMs,
+          }),
+          ...(config.streamingVadParams.samplesOverlap !== undefined && {
+            samples_overlap: config.streamingVadParams.samplesOverlap,
+          }),
+          ...(config.streamingVadParams.partialDecodeIntervalMs !== undefined && {
+            partial_decode_interval_ms:
+              config.streamingVadParams.partialDecodeIntervalMs,
+          }),
+        }
+      : undefined;
+
   return {
     modelSrc: config.modelSrc.src,
     modelType: 'parakeet-transcription',
@@ -249,6 +331,7 @@ function buildLoadModelArgs(config: SttLoadConfig): LoadModelArgs {
       parakeetPreprocessorSrc: config.preprocessorSrc,
       parakeetVocabSrc: config.vocabSrc,
       ...(config.vadModelSrc && { vadModelSrc: config.vadModelSrc }),
+      ...(vadParams && Object.keys(vadParams).length > 0 && { vad_params: vadParams }),
       useGPU: config.useGpu,
       ...(config.maxThreads !== undefined && { maxThreads: config.maxThreads }),
     },

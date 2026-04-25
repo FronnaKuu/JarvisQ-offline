@@ -34,7 +34,8 @@ export interface ISttService {
    */
   transcribeLive(
     pcmStream: AsyncIterable<Uint8Array>,
-    onSegment: (text: string) => void,
+    onSegment: (text: string, isPartial: boolean) => void,
+    options?: { drainGraceMs?: number },
   ): Promise<string>;
 }
 
