@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Divider, SegmentedButtons, Switch, Text, TextInput } from 'react-native-paper';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { NumericSettingRow } from '@ui/components/settings/NumericSettingRow';
+import { AppConfig } from '@core/config/AppConfig';
 import { AppTheme } from '@ui/theme/theme';
 import type { AppSettings, TtsBufferMode, TtsEngineId } from '@domain/types';
 
@@ -233,6 +234,18 @@ export default function SettingsScreen() {
             color={AppTheme.colors.primary}
           />
         </View>
+        <NumericSettingRow
+          label="Auto-commit silence (ms)"
+          value={
+            settings.dictationAutoCommitMs ??
+            AppConfig.stt.dictationAutoCommitMs
+          }
+          min={AppConfig.stt.endOfTurnRange.minMs}
+          max={AppConfig.stt.endOfTurnRange.maxMs}
+          step={AppConfig.stt.endOfTurnRange.stepMs}
+          helper="Silence after the last spoken segment before the assistant takes its turn. Raise it if the LLM starts replying while you are still pausing mid-sentence."
+          onCommit={(v) => void updateSettings({ dictationAutoCommitMs: v })}
+        />
 
         <Divider style={styles.divider} />
 

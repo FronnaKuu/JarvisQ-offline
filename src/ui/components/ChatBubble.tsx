@@ -15,15 +15,12 @@ interface Props {
 
 function ChatBubbleImpl({ message }: Props) {
   const isUser = message.role === 'user';
-  const isPartial = message.id === '__partial__';
-  const timestampLabel = isPartial
-    ? null
-    : formatMessageTimestamp(message.timestampMs);
+  const timestampLabel = formatMessageTimestamp(message.timestampMs);
   const displayText = message.text || (message.isStreaming ? '...' : '');
   // Only render assistant responses as markdown; user bubbles are raw STT
   // transcripts (or typed messages) that should not get reinterpreted as
-  // formatted text. Partial streaming bubbles also stay plain to avoid
-  // re-parsing on every token.
+  // formatted text. Streaming assistant text stays plain to avoid re-parsing
+  // on every token.
   const useMarkdown = !isUser && !message.isStreaming && displayText.length > 0;
 
   return (

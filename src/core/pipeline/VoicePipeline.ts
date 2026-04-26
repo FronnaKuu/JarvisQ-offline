@@ -22,7 +22,23 @@ import type { PipelinePhase, TtsBufferMode } from '@domain/types';
 export interface PipelineCallbacks {
   onPhaseChange: (phase: PipelinePhase) => void;
   onAmplitude: (dbFS: number) => void;
-  onSttPartial: (text: string) => void;
+  /**
+   * File-mode partial transcription update (whisper non-streaming path).
+   * Carries the latest decode of the whole utterance — replace, not append.
+   */
+  onTranscriptionPartial: (text: string) => void;
+  /**
+   * Dictation: a VAD segment has been finalised. Carries the cumulative
+   * committed transcript (append-only across the live turn). Mirrors
+   * HearoPilot's `completedSegments` state slot.
+   */
+  onDictationCommitted: (text: string) => void;
+  /**
+   * Dictation: the still-open VAD segment was re-decoded. Replaces the
+   * displayed running tail in place. Mirrors HearoPilot's
+   * `currentPartialSegment`. Empty string means "no in-flight partial".
+   */
+  onDictationRunningPartial: (text: string) => void;
   onSttFinal: (text: string) => void;
   onLlmToken: (token: string) => void;
   onLlmDone: (fullText: string) => void;
@@ -54,6 +70,12 @@ export interface PipelineConfig {
    * recorder factory on the pipeline deps.
    */
   dictationMode?: boolean;
+  /**
+   * User-tunable end-of-turn debounce. When provided overrides
+   * AppConfig.stt.dictationAutoCommitMs for this pipeline instance.
+   * Already clamped into AppConfig.stt.endOfTurnRange by SettingsStore.
+   */
+  dictationAutoCommitMs?: number;
 }
 
 export interface PipelineServices {
@@ -297,7 +319,8 @@ export class VoicePipeline {
   /**
    * Dictation path: streams PCM from the live recorder straight into the
    * parakeet addon's VAD-driven streaming recognizer. Per-segment partials
-   * surface via onSttPartial as the user speaks. The accumulated transcript
+   * surface via onDictationCommitted/onDictationRunningPartial as the user
+   * speaks. The accumulated transcript
    * is used as the user's final turn after stopListening() is called.
    */
   private async listenDictation(): Promise<void> {
@@ -334,14 +357,13 @@ export class VoicePipeline {
     //     what the user sees as "live transcript".
     let committedText = '';
     let runningPartial = '';
-    const composeDisplay = () =>
-      committedText && runningPartial
-        ? `${committedText} ${runningPartial}`
-        : committedText || runningPartial;
     // End-of-utterance debounce: commit automatically after a prolonged
     // silence following the last VAD-final segment. Cancelled by any new
-    // partial/final (the user resumed speaking).
+    // partial/final (the user resumed speaking). Window is read live from
+    // config so a settings change affects the next scheduling cycle.
     let autoCommitTimer: ReturnType<typeof setTimeout> | null = null;
+    const resolveAutoCommitMs = (): number =>
+      this.config.dictationAutoCommitMs ?? AppConfig.stt.dictationAutoCommitMs;
     const cancelAutoCommit = (): void => {
       if (autoCommitTimer) {
         clearTimeout(autoCommitTimer);
@@ -350,15 +372,14 @@ export class VoicePipeline {
     };
     const scheduleAutoCommit = (): void => {
       cancelAutoCommit();
+      const windowMs = resolveAutoCommitMs();
       autoCommitTimer = setTimeout(() => {
         autoCommitTimer = null;
         if (this.isCancelled || this.isCommitting) return;
         if (!committedText) return;
-        console.log(
-          `[dictation] auto-commit after ${AppConfig.stt.dictationAutoCommitMs}ms silence`,
-        );
+        console.log(`[dictation] auto-commit after ${windowMs}ms silence`);
         void this.commitListening();
-      }, AppConfig.stt.dictationAutoCommitMs);
+      }, windowMs);
     };
     try {
       console.log('[dictation] opening transcribeStream…');
@@ -367,10 +388,13 @@ export class VoicePipeline {
         (segment, isPartial) => {
           const cleaned = segment.trim();
           if (!cleaned) return;
+          if (this.isCancelled) return;
           if (isPartial) {
             runningPartial = cleaned;
             // User is still inside an open VAD range — defer the auto-commit.
             cancelAutoCommit();
+            console.log(`[dictation] segment [partial] "${cleaned}"`);
+            this.callbacks.onDictationRunningPartial(cleaned);
           } else {
             committedText = committedText
               ? `${committedText} ${cleaned}`
@@ -380,13 +404,13 @@ export class VoicePipeline {
             // Arm the silence timer; if no new speech arrives within the
             // window the turn is auto-submitted to the LLM.
             scheduleAutoCommit();
+            console.log(
+              `[dictation] segment [final] "${cleaned}" → committed:`,
+              committedText,
+            );
+            this.callbacks.onDictationCommitted(committedText);
+            this.callbacks.onDictationRunningPartial('');
           }
-          const display = composeDisplay();
-          console.log(
-            `[dictation] segment ${isPartial ? '[partial]' : '[final]'} "${cleaned}" → display:`,
-            display,
-          );
-          if (!this.isCancelled) this.callbacks.onSttPartial(display);
         },
         { drainGraceMs: AppConfig.stt.streamDrainGraceMs },
       );
@@ -447,7 +471,7 @@ export class VoicePipeline {
 
     try {
       finalText = await this.stt.transcribeFile(uri, (partial) => {
-        if (!this.isCancelled) this.callbacks.onSttPartial(partial);
+        if (!this.isCancelled) this.callbacks.onTranscriptionPartial(partial);
       });
     } catch (err) {
       this.callbacks.onError(

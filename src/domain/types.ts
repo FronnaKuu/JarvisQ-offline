@@ -40,6 +40,18 @@ export interface Conversation {
 
 export type PipelinePhase = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
 
+/**
+ * Live transcription view shown while the user is dictating. Mirrors
+ * HearoPilot's split between completed VAD segments (append-only) and the
+ * still-open partial segment (replaced in place on each native revision).
+ * The pipeline owns the source of truth; the UI just renders these two
+ * fields side by side.
+ */
+export interface DictationView {
+  committedText: string;
+  runningPartial: string;
+}
+
 export interface PipelineState {
   phase: PipelinePhase;
   partialSttText: string;
@@ -99,6 +111,12 @@ export interface AppSettings {
   // devices without hardware AEC can capture the decaying TTS output and
   // self-trigger a new turn.
   handsFreeMode: boolean;
+  /**
+   * Optional override for the dictation end-of-turn debounce. When undefined
+   * the pipeline uses AppConfig.stt.dictationAutoCommitMs. Persisted values
+   * are clamped into AppConfig.stt.endOfTurnRange by SettingsStore.
+   */
+  dictationAutoCommitMs?: number;
   // ─── Translation defaults (used when the user creates a new translation
   //     chat; each conversation can override them afterwards) ──────────────
   translationEngine: TranslationEngine;

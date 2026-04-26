@@ -32,6 +32,12 @@ export const Layout = {
   atBottomThresholdPx: 32,
 } as const;
 
+export const Opacity = {
+  // Running dictation partial — visibly distinct from committed text without
+  // changing color. Mirrors HearoPilot's primaryContainer alpha=0.3 cue.
+  runningPartial: 0.55,
+} as const;
+
 export const Typography = {
   titleLarge: { fontSize: 22, fontWeight: '700' as const, letterSpacing: 0 },
   titleMedium: { fontSize: 18, fontWeight: '700' as const, letterSpacing: 0 },
@@ -61,6 +67,7 @@ export interface AppThemeType extends MD3Theme {
   radius: typeof Radius;
   typography: typeof Typography;
   layout: typeof Layout;
+  opacity: typeof Opacity;
   colors: MD3Theme['colors'] & typeof ExtendedColors;
 }
 
@@ -70,6 +77,7 @@ export const AppTheme: AppThemeType = {
   radius: Radius,
   typography: Typography,
   layout: Layout,
+  opacity: Opacity,
   colors: {
     ...MD3DarkTheme.colors,
     primary: '#7B9EFF',

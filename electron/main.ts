@@ -147,7 +147,12 @@ async function buildPipeline(window: BrowserWindow): Promise<VoicePipeline> {
     {
       onPhaseChange: (phase) => send(AppIpcChannels.pipelinePhase, { phase }),
       onAmplitude: (dbFS) => send(AppIpcChannels.pipelineAmplitude, { dbFS }),
-      onSttPartial: (text) => send(AppIpcChannels.pipelineSttPartial, { text }),
+      onTranscriptionPartial: (text: string) =>
+        send(AppIpcChannels.pipelineSttPartial, { text }),
+      onDictationCommitted: (text: string) =>
+        send(AppIpcChannels.pipelineSttPartial, { text }),
+      onDictationRunningPartial: (text: string) =>
+        send(AppIpcChannels.pipelineSttPartial, { text }),
       onSttFinal: (text) => send(AppIpcChannels.pipelineSttFinal, { text }),
       onLlmToken: (token) => send(AppIpcChannels.pipelineLlmToken, { token }),
       onLlmDone: (fullText) => send(AppIpcChannels.pipelineLlmDone, { fullText }),

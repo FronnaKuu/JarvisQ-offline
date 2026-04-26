@@ -1,6 +1,6 @@
 // ---- Conversation Screen -------------------------------------------------
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -14,6 +14,7 @@ import { Appbar, IconButton, Menu, Snackbar, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ChatBubble } from '@ui/components/ChatBubble';
+import { DictationBubble } from '@ui/components/DictationBubble';
 import { VoiceButton } from '@ui/components/VoiceButton';
 import { TextComposer } from '@ui/components/TextComposer';
 import { VoicePipeline } from '@core/pipeline/VoicePipeline';
@@ -31,7 +32,9 @@ import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { AppTheme } from '@ui/theme/theme';
 import type { IResponder } from '@core/inference/types';
-import type { Message, PipelinePhase } from '@domain/types';
+import type { DictationView, Message, PipelinePhase } from '@domain/types';
+
+const EMPTY_DICTATION: DictationView = { committedText: '', runningPartial: '' };
 
 export default function ConversationScreen() {
   const router = useRouter();
@@ -49,7 +52,7 @@ export default function ConversationScreen() {
   const targetLang = activeConversation?.targetLang ?? null;
 
   const [phase, setPhase] = useState<PipelinePhase>('IDLE');
-  const [partialText, setPartialText] = useState('');
+  const [dictation, setDictation] = useState<DictationView>(EMPTY_DICTATION);
   const [amplitude, setAmplitude] = useState(-160);
   const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<'voice' | 'text'>('voice');
@@ -111,12 +114,16 @@ export default function ConversationScreen() {
       {
         onPhaseChange: (p) => {
           setPhase(p);
-          if (p === 'THINKING') setPartialText('');
         },
         onAmplitude: (db) => setAmplitude(db),
-        onSttPartial: (text) => setPartialText(text),
+        onTranscriptionPartial: (text) =>
+          setDictation({ committedText: text, runningPartial: '' }),
+        onDictationCommitted: (text) =>
+          setDictation({ committedText: text, runningPartial: '' }),
+        onDictationRunningPartial: (text) =>
+          setDictation((prev) => ({ ...prev, runningPartial: text })),
         onSttFinal: async (text) => {
-          setPartialText('');
+          setDictation(EMPTY_DICTATION);
           await addUserMessage(text);
           const msg = await addAssistantMessage();
           assistantMsgIdRef.current = msg.id;
@@ -138,6 +145,7 @@ export default function ConversationScreen() {
           }
         },
         onError: (msg) => {
+          setDictation(EMPTY_DICTATION);
           setPipelineError(msg);
         },
       },
@@ -157,6 +165,7 @@ export default function ConversationScreen() {
         // vadModelSrc into the model config — off for whisper and any
         // parakeet build where the new .bare isn't deployed.
         dictationMode: AppConfig.stt.parakeetStreamingEnabled,
+        dictationAutoCommitMs: settings.dictationAutoCommitMs,
       },
     );
 
@@ -182,6 +191,7 @@ export default function ConversationScreen() {
         pitch: settings.ttsPitch,
         language: settings.ttsSystemLanguage,
       },
+      dictationAutoCommitMs: settings.dictationAutoCommitMs,
     });
     llmResponderRef.current?.updateConfig({
       systemPrompt: settings.llmSystemPrompt,
@@ -193,6 +203,7 @@ export default function ConversationScreen() {
     settings.ttsSpeed,
     settings.ttsPitch,
     settings.ttsSystemLanguage,
+    settings.dictationAutoCommitMs,
   ]);
 
   const handleVoicePress = useCallback(() => {
@@ -231,6 +242,7 @@ export default function ConversationScreen() {
         // session so the pipeline does not auto-rearm while muted.
         pipelineRef.current?.updateConfig({ handsFreeMode: false });
         void pipelineRef.current?.stopListening();
+        setDictation(EMPTY_DICTATION);
       }
       return next;
     });
@@ -245,6 +257,7 @@ export default function ConversationScreen() {
   const handleNewConversation = useCallback(() => {
     void pipelineRef.current?.stopListening();
     pipelineRef.current?.clearHistory();
+    setDictation(EMPTY_DICTATION);
     router.push('/mode-picker');
   }, [router]);
 
@@ -266,22 +279,8 @@ export default function ConversationScreen() {
     });
   }, []);
 
-  const showPartial =
-    partialText.length > 0 && (phase === 'LISTENING' || phase === 'THINKING');
-  const displayMessages: Message[] = useMemo(() => {
-    if (!showPartial) return messages;
-    return [
-      ...messages,
-      {
-        id: '__partial__',
-        conversationId: activeConversation?.id ?? '',
-        role: 'user',
-        text: partialText,
-        timestampMs: Date.now(),
-        isStreaming: true,
-      },
-    ];
-  }, [messages, showPartial, partialText, activeConversation?.id]);
+  const hasDictation =
+    dictation.committedText.length > 0 || dictation.runningPartial.length > 0;
 
   const renderItem = useCallback(
     ({ item }: { item: Message }) => <ChatBubble message={item} />,
@@ -354,7 +353,7 @@ export default function ConversationScreen() {
       >
         <FlatList
           ref={listRef}
-          data={displayMessages}
+          data={messages}
           keyExtractor={(m) => m.id}
           renderItem={renderItem}
           removeClippedSubviews
@@ -363,7 +362,7 @@ export default function ConversationScreen() {
           windowSize={7}
           contentContainerStyle={[
             styles.chatContent,
-            displayMessages.length === 0 && styles.chatContentEmpty,
+            messages.length === 0 && styles.chatContentEmpty,
           ]}
           style={styles.chatList}
           ListEmptyComponent={
@@ -374,6 +373,9 @@ export default function ConversationScreen() {
                   : 'Type a message to start'}
               </Text>
             </View>
+          }
+          ListFooterComponent={
+            hasDictation ? <DictationBubble view={dictation} /> : null
           }
           onScroll={({ nativeEvent }) => {
             const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;

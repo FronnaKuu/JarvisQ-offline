@@ -116,6 +116,18 @@ export const AppConfig = {
      */
     dictationAutoCommitMs: 2_500,
     /**
+     * Bounds for the user-exposed dictation auto-commit setting. The Settings
+     * screen reads min/max/step from here so the slider/input never carries
+     * magic numbers, and SettingsStore clamps any persisted override into the
+     * same range. Override is `undefined` by default — the pipeline falls back
+     * to `dictationAutoCommitMs` above.
+     */
+    endOfTurnRange: {
+      minMs: 800,
+      maxMs: 6_000,
+      stepMs: 100,
+    },
+    /**
      * Silero VAD tuning for the parakeet streaming path. Modeled on the
      * HearoPilot dictation profile (sherpa-onnx + parakeet-tdt-0.6b-v3-int8)
      * which feels live because partials surface every ~1.5 s — not on the

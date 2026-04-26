@@ -50,6 +50,15 @@ const defaultSettings: AppSettings = {
   translationTargetLang: AppConfig.translation.defaultTargetLang,
 };
 
+function clampDictationAutoCommit(
+  raw: number | undefined,
+): number | undefined {
+  if (raw === undefined) return undefined;
+  if (!Number.isFinite(raw)) return undefined;
+  const { minMs, maxMs } = AppConfig.stt.endOfTurnRange;
+  return Math.min(maxMs, Math.max(minMs, Math.round(raw)));
+}
+
 const defaultModelIds: ModelIds = {
   sttModelId: DEFAULT_STT_PROFILE_ID,
   llmModelId: DEFAULT_LLM_PROFILE_ID,
@@ -67,9 +76,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         getPlatform().keyValueStore.getItem(SETTINGS_KEY),
         getPlatform().keyValueStore.getItem(MODEL_IDS_KEY),
       ]);
-      const settings = rawSettings
+      const parsedSettings = rawSettings
         ? { ...defaultSettings, ...(JSON.parse(rawSettings) as Partial<AppSettings>) }
         : defaultSettings;
+      const settings: AppSettings = {
+        ...parsedSettings,
+        dictationAutoCommitMs: clampDictationAutoCommit(
+          parsedSettings.dictationAutoCommitMs,
+        ),
+      };
       const modelIds = rawIds
         ? { ...defaultModelIds, ...(JSON.parse(rawIds) as Partial<ModelIds>) }
         : defaultModelIds;
@@ -80,7 +95,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   updateSettings: async (fields) => {
-    const next = { ...get().settings, ...fields };
+    const merged = { ...get().settings, ...fields };
+    const next: AppSettings = {
+      ...merged,
+      dictationAutoCommitMs: clampDictationAutoCommit(
+        merged.dictationAutoCommitMs,
+      ),
+    };
     await getPlatform().keyValueStore.setItem(SETTINGS_KEY, JSON.stringify(next));
     set({ settings: next });
   },
