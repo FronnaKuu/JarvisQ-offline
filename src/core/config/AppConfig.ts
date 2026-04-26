@@ -108,11 +108,13 @@ export const AppConfig = {
      * partial/final, mirroring the file-mode VAD's silenceDurationMs=900
      * behavior the user is used to.
      *
-     * Set to 1400 ms: longer than VAD's 500 ms (so a natural mid-sentence
-     * breath doesn't trip it), shorter than the file-mode 900 ms + recorder
-     * teardown (so live feels snappier than push-to-talk).
+     * Set to 2500 ms: combined with VAD's 500 ms endpointing this gives
+     * roughly a 3 s "I'm done speaking" pause before the LLM turn fires —
+     * long enough to absorb a thinking-pause mid-sentence without prematurely
+     * committing, short enough that the user doesn't perceive the assistant
+     * as sluggish to react.
      */
-    dictationAutoCommitMs: 1_400,
+    dictationAutoCommitMs: 2_500,
     /**
      * Silero VAD tuning for the parakeet streaming path. Modeled on the
      * HearoPilot dictation profile (sherpa-onnx + parakeet-tdt-0.6b-v3-int8)

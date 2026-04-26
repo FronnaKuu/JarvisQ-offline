@@ -245,6 +245,20 @@ export class VoicePipeline {
   // ---- Listen phase ------------------------------------------------------
 
   private async listen(): Promise<void> {
+    // Re-entrancy guard for the dictation path. The SDK's transcribeStream
+    // duplex session is one-per-model-instance: opening a second session
+    // before the first has fully torn down throws "Streaming session already
+    // active for this instance". This can happen when a touch event, a
+    // hands-free auto-rearm, and the auto-commit timer race each other —
+    // `phase !== 'IDLE'` alone doesn't catch it because the second caller
+    // may arrive while phase is transitioning. Wait for the in-flight turn
+    // to finish (and its server session to close) before proceeding.
+    if (this.activeDictationPromise) {
+      console.warn('[pipeline] listen() called while dictation turn active — awaiting prior turn');
+      await this.activeDictationPromise.catch(() => {});
+      if (this.isCancelled) return;
+    }
+
     this.setPhase('LISTENING');
 
     if (this.config.dictationMode && this.liveRecorderFactory) {
