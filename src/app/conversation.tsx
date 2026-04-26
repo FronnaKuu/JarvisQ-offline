@@ -362,7 +362,7 @@ export default function ConversationScreen() {
           windowSize={7}
           contentContainerStyle={[
             styles.chatContent,
-            messages.length === 0 && styles.chatContentEmpty,
+            messages.length === 0 && !hasDictation && styles.chatContentEmpty,
           ]}
           style={styles.chatList}
           ListEmptyComponent={

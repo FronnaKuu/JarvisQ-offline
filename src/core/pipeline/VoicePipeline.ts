@@ -7,6 +7,7 @@
 
 import { ClauseStreamer } from './ClauseStreamer';
 import { AppConfig } from '@core/config/AppConfig';
+import { dbFsFromPcm16 } from '@core/utils/PcmAmplitude';
 import { captureSnapshot, logLlmStart, logLlmDone } from '@core/utils/PerfLogger';
 import type { IAudioRecorder } from '@core/ports/IAudioRecorder';
 import type { IAudioPlayer } from '@core/ports/IAudioPlayer';
@@ -362,6 +363,12 @@ export class VoicePipeline {
     // partial/final (the user resumed speaking). Window is read live from
     // config so a settings change affects the next scheduling cycle.
     let autoCommitTimer: ReturnType<typeof setTimeout> | null = null;
+    // Last wall-clock instant a PCM chunk crossed the speech threshold.
+    // Initialised to "now" so the timer cannot fire before any audio has
+    // been observed. Fed by the chunk wrapper below — this is the only
+    // continuous voice-activity proxy we have until the parakeet addon
+    // emits mid-segment partials.
+    let lastVoiceMs = Date.now();
     const resolveAutoCommitMs = (): number =>
       this.config.dictationAutoCommitMs ?? AppConfig.stt.dictationAutoCommitMs;
     const cancelAutoCommit = (): void => {
@@ -370,21 +377,46 @@ export class VoicePipeline {
         autoCommitTimer = null;
       }
     };
+    const tryAutoCommit = (): void => {
+      autoCommitTimer = null;
+      if (this.isCancelled || this.isCommitting) return;
+      if (!committedText) return;
+      const windowMs = resolveAutoCommitMs();
+      const sinceVoiceMs = Date.now() - lastVoiceMs;
+      if (sinceVoiceMs < windowMs) {
+        // User is still vocalising even though no new VAD-final has landed
+        // (parakeet 0.3.x: only emits at endpoints, no partials). Wait the
+        // remaining quiet window before reconsidering.
+        autoCommitTimer = setTimeout(tryAutoCommit, windowMs - sinceVoiceMs);
+        return;
+      }
+      console.log(
+        `[dictation] auto-commit after ${windowMs}ms silence (voice quiet ${sinceVoiceMs}ms)`,
+      );
+      void this.commitListening();
+    };
     const scheduleAutoCommit = (): void => {
       cancelAutoCommit();
-      const windowMs = resolveAutoCommitMs();
-      autoCommitTimer = setTimeout(() => {
-        autoCommitTimer = null;
-        if (this.isCancelled || this.isCommitting) return;
-        if (!committedText) return;
-        console.log(`[dictation] auto-commit after ${windowMs}ms silence`);
-        void this.commitListening();
-      }, windowMs);
+      autoCommitTimer = setTimeout(tryAutoCommit, resolveAutoCommitMs());
+    };
+    // Wrap the live PCM iterator so every chunk feeds two consumers: the SDK
+    // streaming session (transcribe) and our voice-activity tracker (cancel
+    // premature auto-commit while the user is still vocalising).
+    const speechThresholdDb = AppConfig.vad.speechThresholdDb;
+    const trackVoiceActivity = async function* (
+      source: AsyncIterable<Uint8Array>,
+    ): AsyncIterable<Uint8Array> {
+      for await (const chunk of source) {
+        if (dbFsFromPcm16(chunk) > speechThresholdDb) {
+          lastVoiceMs = Date.now();
+        }
+        yield chunk;
+      }
     };
     try {
       console.log('[dictation] opening transcribeStream…');
       finalText = await this.stt.transcribeLive(
-        handle.chunks(),
+        trackVoiceActivity(handle.chunks()),
         (segment, isPartial) => {
           const cleaned = segment.trim();
           if (!cleaned) return;
