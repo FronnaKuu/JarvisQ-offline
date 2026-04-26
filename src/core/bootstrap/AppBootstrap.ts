@@ -120,6 +120,10 @@ export class AppBootstrap {
         LLM_PROFILES[modelIds.llmModelId] ??
         LLM_PROFILES[DEFAULT_LLM_PROFILE_ID]!;
 
+      // Free the translator's RAM before bringing the LLM up — the two
+      // responders are mutually exclusive per chat mode.
+      if (TranslatorService.isLoaded) await TranslatorService.unload();
+
       if (LlmService.isLoaded) return;
 
       handlers.onServiceStart?.('llm', llmProfile.label);
@@ -160,6 +164,9 @@ export class AppBootstrap {
     ) {
       return;
     }
+
+    // Free the LLM's RAM before bringing the translator up.
+    if (LlmService.isLoaded) await LlmService.unload();
 
     const label =
       resolved.kind === 'direct'

@@ -21,12 +21,31 @@ export interface LlmLoadConfig {
 class LlmServiceClass implements ILlmService {
   private modelId: string | null = null;
   private noThink = false;
+  private loadingPromise: Promise<void> | null = null;
 
   get isLoaded(): boolean {
     return this.modelId !== null;
   }
 
   async load(
+    config: LlmLoadConfig,
+    onProgress?: (p: ModelProgressUpdate) => void,
+    httpFallbackConfig?: LlmLoadConfig,
+  ): Promise<void> {
+    // Coalesce concurrent callers (mode-picker + chat screen mount both invoke
+    // ensureResponderReady before the first load resolves) onto a single
+    // loadModel RPC.
+    if (this.loadingPromise) return this.loadingPromise;
+
+    this.loadingPromise = this.doLoad(config, onProgress, httpFallbackConfig);
+    try {
+      await this.loadingPromise;
+    } finally {
+      this.loadingPromise = null;
+    }
+  }
+
+  private async doLoad(
     config: LlmLoadConfig,
     onProgress?: (p: ModelProgressUpdate) => void,
     httpFallbackConfig?: LlmLoadConfig,

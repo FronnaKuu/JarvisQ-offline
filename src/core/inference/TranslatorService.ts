@@ -35,6 +35,7 @@ export type TranslatorLoadConfig =
 class TranslatorServiceClass implements ITranslatorService {
   private legs: string[] = []; // 1 entry for direct, 2 for pivot (leg1, leg2)
   private currentDirection: { from: string; to: string } | null = null;
+  private loadingPromise: Promise<void> | null = null;
 
   get isLoaded(): boolean {
     return this.legs.length > 0;
@@ -45,6 +46,21 @@ class TranslatorServiceClass implements ITranslatorService {
   }
 
   async load(
+    config: TranslatorLoadConfig,
+    onProgress?: (p: ModelProgressUpdate) => void,
+  ): Promise<void> {
+    // Coalesce concurrent callers onto the same in-flight load.
+    if (this.loadingPromise) return this.loadingPromise;
+
+    this.loadingPromise = this.doLoad(config, onProgress);
+    try {
+      await this.loadingPromise;
+    } finally {
+      this.loadingPromise = null;
+    }
+  }
+
+  private async doLoad(
     config: TranslatorLoadConfig,
     onProgress?: (p: ModelProgressUpdate) => void,
   ): Promise<void> {
