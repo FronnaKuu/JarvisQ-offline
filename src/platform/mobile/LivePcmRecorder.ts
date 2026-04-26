@@ -9,12 +9,11 @@
 // the smallest viable dependency.
 
 import AudioRecord from 'react-native-live-audio-stream';
+import { AppConfig } from '@core/config/AppConfig';
 
 const SAMPLE_RATE = 16000;
 const BITS_PER_SAMPLE = 16;
 const CHANNELS = 1;
-// MediaRecorder.AudioSource.VOICE_RECOGNITION — AEC/NS off, raw mic feed.
-const ANDROID_AUDIO_SOURCE = 6;
 // Pick a bufferSize around 200 ms: 16000 samples/s * 0.2s * 2 bytes = 6400.
 // Smaller = lower latency but more event overhead; 6400 bytes is a good
 // trade-off that lets Silero VAD (512-sample windows = 32 ms) process
@@ -53,7 +52,7 @@ export class LivePcmRecorder {
       sampleRate: SAMPLE_RATE,
       channels: CHANNELS,
       bitsPerSample: BITS_PER_SAMPLE,
-      audioSource: ANDROID_AUDIO_SOURCE,
+      audioSource: AppConfig.recording.androidLiveAudioSource,
       bufferSize: BUFFER_SIZE_BYTES,
       // react-native-live-audio-stream writes each capture to a WAV on disk
       // regardless of whether we consume it. Point at a throwaway file; we

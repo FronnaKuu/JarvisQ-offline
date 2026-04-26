@@ -114,6 +114,14 @@ export class VoicePipeline {
    * "Streaming session already active for this instance".
    */
   private activeDictationPromise: Promise<void> | null = null;
+  /**
+   * Distinguishes a graceful "submit" (commitListening) from a hard cancel
+   * (stopListening). On commit, the still-open partial transcript is the
+   * user's best stable read of what they just said and must reach the LLM —
+   * otherwise short utterances ending before a VAD silence boundary never
+   * trigger a turn. On cancel, partials are discarded.
+   */
+  private isCommitting = false;
   private readonly stt: ISttService;
   private readonly responder: IResponder;
   private readonly tts: ITtsService;
@@ -164,6 +172,7 @@ export class VoicePipeline {
     if (this.phase !== 'IDLE') return;
     this.isCancelled = false;
     this.ttsAborted = false;
+    this.isCommitting = false;
     await this.listen();
   }
 
@@ -178,6 +187,7 @@ export class VoicePipeline {
       await this.stopListening();
       return;
     }
+    this.isCommitting = true;
     await this.liveRecorderHandle.stop();
     this.liveRecorderHandle = null;
     await this.activeDictationPromise.catch(() => {});
@@ -243,6 +253,7 @@ export class VoicePipeline {
         await this.activeDictationPromise;
       } finally {
         this.activeDictationPromise = null;
+        this.isCommitting = false;
       }
       return;
     }
@@ -313,6 +324,28 @@ export class VoicePipeline {
       committedText && runningPartial
         ? `${committedText} ${runningPartial}`
         : committedText || runningPartial;
+    // End-of-utterance debounce: commit automatically after a prolonged
+    // silence following the last VAD-final segment. Cancelled by any new
+    // partial/final (the user resumed speaking).
+    let autoCommitTimer: ReturnType<typeof setTimeout> | null = null;
+    const cancelAutoCommit = (): void => {
+      if (autoCommitTimer) {
+        clearTimeout(autoCommitTimer);
+        autoCommitTimer = null;
+      }
+    };
+    const scheduleAutoCommit = (): void => {
+      cancelAutoCommit();
+      autoCommitTimer = setTimeout(() => {
+        autoCommitTimer = null;
+        if (this.isCancelled || this.isCommitting) return;
+        if (!committedText) return;
+        console.log(
+          `[dictation] auto-commit after ${AppConfig.stt.dictationAutoCommitMs}ms silence`,
+        );
+        void this.commitListening();
+      }, AppConfig.stt.dictationAutoCommitMs);
+    };
     try {
       console.log('[dictation] opening transcribeStream…');
       finalText = await this.stt.transcribeLive(
@@ -322,12 +355,17 @@ export class VoicePipeline {
           if (!cleaned) return;
           if (isPartial) {
             runningPartial = cleaned;
+            // User is still inside an open VAD range — defer the auto-commit.
+            cancelAutoCommit();
           } else {
             committedText = committedText
               ? `${committedText} ${cleaned}`
               : cleaned;
             // The freshly committed range supersedes the in-flight partial.
             runningPartial = '';
+            // Arm the silence timer; if no new speech arrives within the
+            // window the turn is auto-submitted to the LLM.
+            scheduleAutoCommit();
           }
           const display = composeDisplay();
           console.log(
@@ -338,16 +376,28 @@ export class VoicePipeline {
         },
         { drainGraceMs: AppConfig.stt.streamDrainGraceMs },
       );
+      cancelAutoCommit();
       // The SDK's session iterator may close via the drain timeout before
       // the last final lands. committedText is the source of truth because
       // it accumulates only confirmed (non-partial) segments observed by
-      // the JS side; runningPartial is dropped intentionally — partials
-      // are speculative and should never reach the LLM as the user's turn.
+      // the JS side. On a graceful commit (tap-to-stop in dictation mode),
+      // promote the still-open runningPartial too — short utterances often
+      // end before VAD detects a silence boundary, so the partial is the
+      // only transcript we have. On a hard cancel, partials stay discarded.
       if (committedText.length > finalText.length) {
         finalText = committedText;
       }
+      if (this.isCommitting && runningPartial) {
+        const merged = committedText
+          ? `${committedText} ${runningPartial}`
+          : runningPartial;
+        if (merged.length > finalText.length) {
+          finalText = merged;
+        }
+      }
       console.log('[dictation] stream closed, finalText=', finalText);
     } catch (err) {
+      cancelAutoCommit();
       console.error('[dictation] transcribeLive error', err);
       this.callbacks.onError(
         err instanceof Error

@@ -35,6 +35,14 @@ export const AppConfig = {
     // AAC bitrate for Android captures at 16 kHz mono. 128 kbps is expo-av's
     // legacy default; raising it improves consonant clarity for Whisper.
     androidBitrate: 128_000,
+    // MediaRecorder.AudioSource for the live PCM stream feeding parakeet.
+    // 1 = MIC (raw mic feed, what HearoPilot uses with sherpa-onnx + parakeet
+    //         and what their ASR is tuned against — minimal platform DSP).
+    // 6 = VOICE_RECOGNITION (Android applies an ASR-tuned AGC/NS profile;
+    //         on some devices this distorts plosives and clips quiet speech).
+    // 9 = UNPROCESSED (truly raw, but unsupported on older devices).
+    // Keep at 1 to mirror the HearoPilot reference profile.
+    androidLiveAudioSource: 1,
   },
 
   // Amplitude-based VAD (Voice Activity Detection) during recording.
@@ -92,6 +100,20 @@ export const AppConfig = {
      */
     streamDrainGraceMs: 5_000,
     /**
+     * "End-of-utterance" silence in the streaming dictation path. The Silero
+     * VAD already closes a segment on `minSilenceDurationMs` (~500 ms) inside
+     * a single utterance — but the user expects the LLM to fire only after a
+     * longer pause that signals "I'm done speaking". This debounce starts
+     * after each committed [final] segment and is cancelled by any new
+     * partial/final, mirroring the file-mode VAD's silenceDurationMs=900
+     * behavior the user is used to.
+     *
+     * Set to 1400 ms: longer than VAD's 500 ms (so a natural mid-sentence
+     * breath doesn't trip it), shorter than the file-mode 900 ms + recorder
+     * teardown (so live feels snappier than push-to-talk).
+     */
+    dictationAutoCommitMs: 1_400,
+    /**
      * Silero VAD tuning for the parakeet streaming path. Modeled on the
      * HearoPilot dictation profile (sherpa-onnx + parakeet-tdt-0.6b-v3-int8)
      * which feels live because partials surface every ~1.5 s — not on the
@@ -110,8 +132,12 @@ export const AppConfig = {
      *
      * - threshold: 0.5 keeps Silero's published sensitivity.
      * - minSpeechDurationMs: 250 ms — drop ultra-short bursts (clicks).
-     * - minSilenceDurationMs: 300 ms — close on natural short pauses.
-     * - maxSpeechDurationS: 12 s — generous ceiling, partials drive UX.
+     * - minSilenceDurationMs: 500 ms — match HearoPilot's vadMinSilenceDuration
+     *   default (AppSettings.kt). 300 ms cut mid-word on natural pauses; 500 ms
+     *   gives the recognizer a complete clause per segment.
+     * - maxSpeechDurationS: 10 s — match HearoPilot's vadMaxSpeechDuration.
+     *   Partials drive the live UX, so a tighter ceiling forces a commit
+     *   before TDT accuracy degrades on overlong contexts.
      * - speechPadMs: 100 ms — pad each cut so plosives aren't clipped.
      * - samplesOverlap: 0.3 s — context carryover at endpoint commits.
      * - partialDecodeIntervalMs: 1500 ms — mirrors HearoPilot's cadence.
@@ -122,8 +148,8 @@ export const AppConfig = {
     streamingVad: {
       threshold: 0.5,
       minSpeechDurationMs: 250,
-      minSilenceDurationMs: 300,
-      maxSpeechDurationS: 12,
+      minSilenceDurationMs: 500,
+      maxSpeechDurationS: 10,
       speechPadMs: 100,
       samplesOverlap: 0.3,
       partialDecodeIntervalMs: 1500,
