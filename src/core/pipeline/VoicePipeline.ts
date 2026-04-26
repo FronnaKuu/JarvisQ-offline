@@ -500,8 +500,20 @@ export class VoicePipeline {
     logLlmStart(perfStart);
     const startMs = Date.now();
 
+    // The queue can transiently empty between two clauses (we just spoke
+    // the current one and the next hasn't been pushed yet by the streamer
+    // running on responder tokens). drainTtsQueue then awaits player drain
+    // and fires onEmpty — but by the time drain resolves, more clauses may
+    // already be back in the queue. Without re-checking here, onSpeakingDone
+    // fires while TTS still has audio to play; the hands-free auto-rearm
+    // then opens the mic during the assistant's own speech and the dictation
+    // path captures it as a new user turn (regression observed after the
+    // parakeet streaming switch — the file-mode VAD was lenient enough to
+    // discard the captured tail, Silero treats it as legitimate speech).
     const onQueueEmpty = () => {
-      if (responderDone) this.onSpeakingDone(userText, fullResponse);
+      if (responderDone && clauses.length === 0) {
+        this.onSpeakingDone(userText, fullResponse);
+      }
     };
 
     const isBuffered =
