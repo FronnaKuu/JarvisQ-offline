@@ -41,8 +41,12 @@ export const AppConfig = {
     // 6 = VOICE_RECOGNITION (Android applies an ASR-tuned AGC/NS profile;
     //         on some devices this distorts plosives and clips quiet speech).
     // 9 = UNPROCESSED (truly raw, but unsupported on older devices).
-    // Keep at 1 to mirror the HearoPilot reference profile.
-    androidLiveAudioSource: 1,
+    // OnePlus CPH2769 with src=1 (MIC) gives gain too low for Silero
+    // threshold 0.5 — VAD never opens a segment despite 60s of speech.
+    // src=6 (VOICE_RECOGNITION) applies an ASR-tuned AGC/NS profile that
+    // lifts the signal into Silero's range. HearoPilot uses MIC with
+    // sherpa-onnx, but their VAD chain isn't the same.
+    androidLiveAudioSource: 6,
   },
 
   // Amplitude-based VAD (Voice Activity Detection) during recording.
