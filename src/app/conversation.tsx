@@ -175,7 +175,7 @@ export default function ConversationScreen() {
       llmResponderRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, sourceLang, targetLang]);
+  }, [mode, sourceLang, targetLang, settings.ttsEngine]);
 
   // Propagate live setting / active-conversation overrides to the long-lived
   // pipeline. The system prompt lives on the LLM responder now, so it is
