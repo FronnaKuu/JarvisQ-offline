@@ -1,0 +1,438 @@
+From 2ef3da4a19db91b63e5036773a4b569a72b4a8e5 Mon Sep 17 00:00:00 2001
+From: Helldez <74499579+Helldez@users.noreply.github.com>
+Date: Sat, 25 Apr 2026 09:48:27 +0200
+Subject: [PATCH 2/4] feat(parakeet,sdk): mid-segment partial decoding for live
+ streaming
+
+Adds a partial-decode loop to the parakeet streaming addon for live
+dictation UX and propagates the resulting isPartial flag end-to-end
+through the SDK's transcribeStream duplex API.
+
+qvac-lib-infer-parakeet (native):
+- StreamingProcessor.Config.partialDecodeIntervalSamples (default 1.5 s).
+- While Silero reports an open segment, processLoop re-runs the recognizer
+  on the live range every N samples of new audio and queues the output
+  with isPartial=true. Skipped on the same iteration that trims a final
+  segment, since the segments[] timestamps are then stale.
+- ParakeetTypes.Transcript gains isPartial; AddonJs.startStreaming reads
+  partialDecodeIntervalMs from the JS config; AddonJs output handler
+  serializes isPartial onto each emitted JS object.
+- index.js / index.d.ts forward partial_decode_interval_ms from
+  vad_params into the addon.
+
+sdk:
+- transcribeStreamResponseSchema.isPartial?: boolean.
+- vadParamsSchema.partial_decode_interval_ms?: number.
+- bare ops/transcribe.ts yields {text, isPartial}; parakeet plugin
+  handler propagates it into the duplex frame.
+- Client transcribe.ts parseResponseLines yields {text, isPartial} and
+  TranscribeStreamSession's iterator type follows.
+
+The recognizer's behavior is otherwise unchanged: callers that don't set
+partial_decode_interval_ms get the legacy final-only stream.
+---
+ .../addon/src/addon/AddonJs.hpp               | 16 +++++
+ .../src/model-interface/ParakeetTypes.hpp     | 16 ++++-
+ .../model-interface/StreamingProcessor.cpp    | 69 +++++++++++++++++--
+ packages/qvac-lib-infer-parakeet/index.d.ts   |  7 ++
+ packages/qvac-lib-infer-parakeet/index.js     | 16 ++++-
+ packages/sdk/client/api/transcribe.ts         | 10 ++-
+ packages/sdk/schemas/transcription-config.ts  |  3 +
+ packages/sdk/schemas/transcription.ts         | 16 ++++-
+ packages/sdk/server/bare/ops/transcribe.ts    | 13 ++--
+ .../plugins/parakeet-transcription/plugin.ts  |  5 +-
+ 10 files changed, 151 insertions(+), 20 deletions(-)
+
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/addon/AddonJs.hpp b/packages/qvac-lib-infer-parakeet/addon/src/addon/AddonJs.hpp
+index 7865603..2d2921f 100644
+--- a/packages/qvac-lib-infer-parakeet/addon/src/addon/AddonJs.hpp
++++ b/packages/qvac-lib-infer-parakeet/addon/src/addon/AddonJs.hpp
+@@ -73,6 +73,10 @@ struct JsParakeetOutputHandler
+                     "id",
+                     js::Number::create(
+                         this->env_, static_cast<uint64_t>(output[i].id)));
++                jsTranscript.setProperty(
++                    this->env_,
++                    "isPartial",
++                    js::Boolean::create(this->env_, output[i].isPartial));
+                 jsOutput.set(this->env_, i, jsTranscript);
+               }
+               return jsOutput;
+@@ -202,6 +206,18 @@ startStreaming(js_env_t* env, js_callback_info_t* info) try {
+         static_cast<float>(maybeSamplesOverlap.value().as<double>(env));
+   }
+ 
++  auto maybePartialDecodeMs =
++      configObj.getOptionalProperty<js::Number>(env, "partialDecodeIntervalMs");
++  if (maybePartialDecodeMs.has_value()) {
++    const auto ms = maybePartialDecodeMs.value().as<double>(env);
++    // Negative or zero from JS disables partial decoding entirely. Anything
++    // positive is converted to a sample count using the active sample rate.
++    config.partialDecodeIntervalSamples =
++        ms <= 0
++            ? 0
++            : static_cast<int>((ms / 1000.0) * config.sampleRate);
++  }
++
+   {
+     std::lock_guard lock(g_streamingMtx);
+ 
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/ParakeetTypes.hpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/ParakeetTypes.hpp
+index 357b2d4..34192ed 100644
+--- a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/ParakeetTypes.hpp
++++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/ParakeetTypes.hpp
+@@ -17,11 +17,23 @@ struct Transcript {
+   float start;
+   float end;
+   size_t id;
++  // True for in-progress streaming results that should REPLACE the previous
++  // partial in the consumer's UI. False (default) for committed segments
++  // that should APPEND. Streaming consumers are expected to keep the latest
++  // partial as a running tail and freeze it into the committed log only when
++  // a non-partial Transcript with overlapping audio range arrives.
++  bool isPartial;
+ 
+-  Transcript() : toAppend{false}, start(-1.0F), end(-1.0F), id{0} {}
++  Transcript()
++      : toAppend{false}, start(-1.0F), end(-1.0F), id{0}, isPartial{false} {}
+ 
+   explicit Transcript(std::string_view strView)
+-      : text{strView}, toAppend{false}, start{-1.0F}, end{-1.0F}, id{0} {}
++      : text{strView},
++        toAppend{false},
++        start{-1.0F},
++        end{-1.0F},
++        id{0},
++        isPartial{false} {}
+ };
+ 
+ /**
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp
+index 444a957..c266289 100644
+--- a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp
++++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp
+@@ -91,7 +91,8 @@ void StreamingProcessor::cancel() {
+   }
+ }
+ 
+-void StreamingProcessor::processAudioRange(int startSample, int endSample) {
++void StreamingProcessor::processAudioRange(
++    int startSample, int endSample, bool isPartial) {
+   const int len = endSample - startSample;
+   if (len <= 0) {
+     return;
+@@ -99,11 +100,12 @@ void StreamingProcessor::processAudioRange(int startSample, int endSample) {
+ 
+   QLOG(
+       qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
+-      "StreamingProcessor: processing " + std::to_string(len) + " samples (" +
++      std::string("StreamingProcessor: processing ") + std::to_string(len) +
++          " samples (" +
+           std::to_string(
+               static_cast<double>(len) /
+               static_cast<double>(config_.sampleRate)) +
+-          "s)");
++          "s)" + (isPartial ? " [partial]" : " [final]"));
+ 
+   ParakeetModel::Input segment(
+       processBuffer_.begin() + startSample,
+@@ -113,6 +115,11 @@ void StreamingProcessor::processAudioRange(int startSample, int endSample) {
+     model_.process(segment);
+     auto transcripts = model_.takeOutput();
+     if (!transcripts.empty()) {
++      // Tag every transcript in this batch so the consumer can decide
++      // whether to replace the running partial in the UI or commit it.
++      for (auto& t : transcripts) {
++        t.isPartial = isPartial;
++      }
+       outputQueue_->queueResult(std::any(std::move(transcripts)));
+     }
+   } catch (const std::exception& e) {
+@@ -229,7 +236,7 @@ void StreamingProcessor::processLoop() {
+                     t1S * static_cast<float>(config_.sampleRate)),
+                 bufferSize);
+             if (endSample > startSample) {
+-              processAudioRange(startSample, endSample);
++              processAudioRange(startSample, endSample, /*isPartial=*/false);
+             }
+           }
+ 
+@@ -242,6 +249,53 @@ void StreamingProcessor::processLoop() {
+           processBuffer_.erase(
+               processBuffer_.begin(), processBuffer_.begin() + trimPoint);
+           bufferSizeAtLastVadRun_ = 0;
++          // Buffer was trimmed up to the end of the last final segment; the
++          // partial cadence restarts on the fresh utterance that follows.
++          bufferSizeAtLastPartialDecode_ = 0;
++        }
++
++        // Mid-segment partial decode: when the most recent VAD segment is
++        // still open (its end + speechPad has not yet cleared the live
++        // buffer) and enough new audio has accumulated since our last
++        // partial pass, run Parakeet on the in-progress range and emit it
++        // tagged isPartial=true. Skipped on the terminating pass (done) so
++        // we don't compete with the natural end-of-stream final flush, and
++        // skipped when complete segments were just trimmed this pass — the
++        // remaining buffer is then a fresh utterance with stale VAD coords,
++        // which we'll re-segment cleanly on the next loop iteration.
++        if (!done && config_.partialDecodeIntervalSamples > 0 &&
++            !segments.empty() && lastComplete < 0) {
++          const int currentBufferSize =
++              static_cast<int>(processBuffer_.size());
++          const SileroVad::Segment& lastSeg = segments.back();
++          const float lastT0S =
++              static_cast<float>(lastSeg.t0Cs) * CS_TO_SEC;
++          const float lastT1S =
++              static_cast<float>(lastSeg.t1Cs) * CS_TO_SEC;
++          const float marginS =
++              static_cast<float>(config_.speechPadMs) / 1000.0F;
++          const float liveDurationS =
++              static_cast<float>(currentBufferSize) /
++              static_cast<float>(config_.sampleRate);
++          const bool segmentStillOpen = lastT1S + marginS >= liveDurationS;
++
++          if (segmentStillOpen) {
++            const int newAudioSinceLast =
++                currentBufferSize - bufferSizeAtLastPartialDecode_;
++            if (newAudioSinceLast >= config_.partialDecodeIntervalSamples) {
++              const int partialStart = std::max(
++                  0,
++                  static_cast<int>(
++                      lastT0S *
++                      static_cast<float>(config_.sampleRate)));
++              const int partialEnd = currentBufferSize;
++              if (partialEnd > partialStart) {
++                processAudioRange(
++                    partialStart, partialEnd, /*isPartial=*/true);
++                bufferSizeAtLastPartialDecode_ = currentBufferSize;
++              }
++            }
++          }
+         }
+       }
+ 
+@@ -251,9 +305,11 @@ void StreamingProcessor::processLoop() {
+             qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
+             "StreamingProcessor: buffer overflow, force-processing " +
+                 std::to_string(processBuffer_.size()) + " samples");
+-        processAudioRange(0, static_cast<int>(processBuffer_.size()));
++        processAudioRange(
++            0, static_cast<int>(processBuffer_.size()), /*isPartial=*/false);
+         processBuffer_.clear();
+         bufferSizeAtLastVadRun_ = 0;
++        bufferSizeAtLastPartialDecode_ = 0;
+       }
+     }
+ 
+@@ -271,7 +327,8 @@ void StreamingProcessor::processLoop() {
+   }
+ 
+   if (!processBuffer_.empty()) {
+-    processAudioRange(0, static_cast<int>(processBuffer_.size()));
++    processAudioRange(
++        0, static_cast<int>(processBuffer_.size()), /*isPartial=*/false);
+     processBuffer_.clear();
+   }
+ 
+diff --git a/packages/qvac-lib-infer-parakeet/index.d.ts b/packages/qvac-lib-infer-parakeet/index.d.ts
+index 97d40b8..716d711 100644
+--- a/packages/qvac-lib-infer-parakeet/index.d.ts
++++ b/packages/qvac-lib-infer-parakeet/index.d.ts
+@@ -73,6 +73,13 @@ export interface ParakeetVadParams {
+   max_speech_duration_s?: number;
+   speech_pad_ms?: number;
+   samples_overlap?: number;
++  /**
++   * Mid-segment partial decode cadence in milliseconds. While inside a still-
++   * open VAD speech segment, the recognizer is re-run every N ms of new
++   * audio and emits a transcript with isPartial=true. The next final commit
++   * (VAD endpoint) replaces it. 0 disables partials.
++   */
++  partial_decode_interval_ms?: number;
+ }
+ 
+ /**
+diff --git a/packages/qvac-lib-infer-parakeet/index.js b/packages/qvac-lib-infer-parakeet/index.js
+index 745ee35..4cd13c4 100644
+--- a/packages/qvac-lib-infer-parakeet/index.js
++++ b/packages/qvac-lib-infer-parakeet/index.js
+@@ -316,7 +316,12 @@ class TranscriptionParakeet {
+       minSpeechDurationMs: vadParams.min_speech_duration_ms || 250,
+       maxSpeechDurationS: vadParams.max_speech_duration_s || 30,
+       speechPadMs: vadParams.speech_pad_ms || 30,
+-      samplesOverlap: vadParams.samples_overlap || 0.1
++      samplesOverlap: vadParams.samples_overlap || 0.1,
++      // Mid-segment partial decode cadence. Pass through verbatim — 0 from
++      // JS disables partials and falls back to legacy final-only behavior.
++      ...(vadParams.partial_decode_interval_ms !== undefined && {
++        partialDecodeIntervalMs: vadParams.partial_decode_interval_ms
++      })
+     })
+ 
+     const response = this._job.start()
+@@ -336,7 +341,14 @@ class TranscriptionParakeet {
+         if (chunk instanceof Float32Array) {
+           audioData = chunk
+         } else {
+-          const int16Data = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2)
++          // Copy into a fresh Uint8Array so the underlying buffer starts at
++          // offset 0 — pear-rpc may hand us sliced Buffers whose byteOffset
++          // is odd, which makes `new Int16Array(chunk.buffer, chunk.byteOffset)`
++          // throw "start offset of Int16Array should be a multiple of 2".
++          const even = chunk.byteLength - (chunk.byteLength % 2)
++          const aligned = new Uint8Array(even)
++          aligned.set(new Uint8Array(chunk.buffer, chunk.byteOffset, even))
++          const int16Data = new Int16Array(aligned.buffer, 0, even / 2)
+           audioData = new Float32Array(int16Data.length)
+           for (let i = 0; i < int16Data.length; i++) {
+             audioData[i] = int16Data[i] / 32768.0
+diff --git a/packages/sdk/client/api/transcribe.ts b/packages/sdk/client/api/transcribe.ts
+index 3f85157..6edcc57 100644
+--- a/packages/sdk/client/api/transcribe.ts
++++ b/packages/sdk/client/api/transcribe.ts
+@@ -159,7 +159,7 @@ async function transcribeStreamDuplex(
+ 
+ async function* parseResponseLines(
+   responseStream: DuplexReadable,
+-): AsyncGenerator<string> {
++): AsyncGenerator<{ text: string; isPartial: boolean }> {
+   let buf = "";
+ 
+   for await (const chunk of responseStream) {
+@@ -181,7 +181,9 @@ async function* parseResponseLines(
+   }
+ }
+ 
+-function processLine(line: string): string | undefined | null {
++function processLine(
++  line: string,
++): { text: string; isPartial: boolean } | undefined | null {
+   if (!line.trim()) return undefined;
+ 
+   let parsed: unknown;
+@@ -204,7 +206,9 @@ function processLine(line: string): string | undefined | null {
+ 
+   if (response.error) throw new TranscriptionFailedError(response.error);
+   if (response.done) return null;
+-  if (response.text?.trim()) return response.text;
++  if (response.text?.trim()) {
++    return { text: response.text, isPartial: response.isPartial === true };
++  }
+   return undefined;
+ }
+ 
+diff --git a/packages/sdk/schemas/transcription-config.ts b/packages/sdk/schemas/transcription-config.ts
+index e2b0325..e4512aa 100644
+--- a/packages/sdk/schemas/transcription-config.ts
++++ b/packages/sdk/schemas/transcription-config.ts
+@@ -16,6 +16,9 @@ const vadParamsSchema = z
+     max_speech_duration_s: z.number().optional(),
+     speech_pad_ms: z.number().optional(),
+     samples_overlap: z.number().optional(),
++    // Parakeet-streaming only: cadence (ms) at which the in-progress segment
++    // is re-decoded and emitted as a partial. Whisper streaming ignores it.
++    partial_decode_interval_ms: z.number().optional(),
+   })
+   .optional();
+ 
+diff --git a/packages/sdk/schemas/transcription.ts b/packages/sdk/schemas/transcription.ts
+index 71f45c4..3659e96 100644
+--- a/packages/sdk/schemas/transcription.ts
++++ b/packages/sdk/schemas/transcription.ts
+@@ -64,6 +64,9 @@ export const transcribeStreamRequestSchema = transcribeBaseSchema.extend({
+ 
+ export const transcribeStreamResponseSchema = transcriptionResultBase.extend({
+   type: z.literal("transcribeStream"),
++  // True when the segment is an in-progress partial that will be replaced by
++  // the next final commit. Absent / false indicates a finalized segment.
++  isPartial: z.boolean().optional(),
+ });
+ 
+ export type TranscribeStreamRequest = z.infer<
+@@ -78,11 +81,22 @@ export type TranscribeStreamClientParams = {
+   prompt?: string;
+ };
+ 
++/**
++ * Element yielded by an active streaming transcription session. `isPartial`
++ * is true while the recognizer is still revising the segment in-flight; the
++ * final commit for that audio range arrives as a non-partial element with
++ * the recognizer's authoritative text.
++ */
++export interface TranscribeStreamSegment {
++  text: string;
++  isPartial: boolean;
++}
++
+ export interface TranscribeStreamSession {
+   write(audioChunk: Buffer): void;
+   end(): void;
+   destroy(): void;
+-  [Symbol.asyncIterator](): AsyncIterator<string>;
++  [Symbol.asyncIterator](): AsyncIterator<TranscribeStreamSegment>;
+ }
+ 
+ export type TranscribeStats = z.infer<typeof transcribeStatsSchema>;
+diff --git a/packages/sdk/server/bare/ops/transcribe.ts b/packages/sdk/server/bare/ops/transcribe.ts
+index fc68ee8..46f90d8 100644
+--- a/packages/sdk/server/bare/ops/transcribe.ts
++++ b/packages/sdk/server/bare/ops/transcribe.ts
+@@ -21,8 +21,13 @@ import { buildStreamResult } from "@/profiling/model-execution";
+ const logger = getServerLogger();
+ 
+ interface StreamingModelResponse {
+-  iterate(): AsyncIterable<{ text: string }[]>;
+-  await(): Promise<{ text: string }[]>;
++  iterate(): AsyncIterable<{ text: string; isPartial?: boolean }[]>;
++  await(): Promise<{ text: string; isPartial?: boolean }[]>;
++}
++
++export interface TranscribeStreamSegment {
++  text: string;
++  isPartial: boolean;
+ }
+ 
+ interface StreamableModel {
+@@ -153,7 +158,7 @@ export async function* transcribeStream(
+   modelId: string,
+   audioInputStream: AsyncIterable<Buffer>,
+   prompt?: string,
+-): AsyncGenerator<string, void, void> {
++): AsyncGenerator<TranscribeStreamSegment, void, void> {
+   const engineType = getEngineModelType(modelId);
+   const silenceMarker = SILENCE_MARKERS[engineType] ?? "";
+ 
+@@ -177,7 +182,7 @@ export async function* transcribeStream(
+         if (!segment.text) continue;
+         if (silenceMarker && segment.text.includes(silenceMarker)) continue;
+         if (segment.text.trim()) {
+-          yield segment.text;
++          yield { text: segment.text, isPartial: segment.isPartial === true };
+         }
+       }
+     }
+diff --git a/packages/sdk/server/bare/plugins/parakeet-transcription/plugin.ts b/packages/sdk/server/bare/plugins/parakeet-transcription/plugin.ts
+index 66dae23..205d979 100644
+--- a/packages/sdk/server/bare/plugins/parakeet-transcription/plugin.ts
++++ b/packages/sdk/server/bare/plugins/parakeet-transcription/plugin.ts
+@@ -304,14 +304,15 @@ export const parakeetPlugin = definePlugin({
+       duplex: true,
+ 
+       handler: async function* (request, inputStream) {
+-        for await (const text of transcribeStream(
++        for await (const segment of transcribeStream(
+           request.modelId,
+           inputStream,
+           request.prompt,
+         )) {
+           yield {
+             type: "transcribeStream" as const,
+-            text,
++            text: segment.text,
++            isPartial: segment.isPartial,
+           };
+         }
+         yield {
+-- 
+2.52.0.windows.1
+

@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Helldez <74499579+Helldez@users.noreply.github.com>
+Date: Wed, 29 Apr 2026 12:30:00 +0200
+Subject: [PATCH 5/5] fix(parakeet): emit open VAD segment so mid-segment
+ partials can fire
+
+The mid-segment partial decode branch added in 0002 was structurally
+unreachable on the OnePlus CPH2769 (and likely any device with a normal
+speaking pace). Diagnosis from a 63 s dictation session:
+
+- 14 final segments were emitted, all with `isPartial=false`.
+- Several spans of >9 s of continuous speech yielded zero partials,
+  even though `partial_decode_interval_ms=1500` was correctly forwarded
+  through the JS config and the addon's `partialDecodeIntervalSamples`.
+
+Root cause is in 0001's `SileroVad::getSegments()`: the function only
+returns segments that have already been **closed** by silence detection
+(when `silenceLen >= minSilenceFrames`) or by the hard `maxSpeechFrames`
+cap. While the user is still speaking and no terminal silence has been
+observed, the trailing in-speech run is silently discarded:
+
+    // Trailing speech that never closed — leave open for the next
+    // invocation unless the caller is at end of stream
+    return segments;   // ← returns an EMPTY vector during ongoing speech
+
+Patch 0002's partial-decode block was conditioned on
+`!segments.empty() && lastComplete < 0`, which is `false && false`
+during the very window the partial decode is supposed to cover. The
+branch never executes. The reference implementation we audited
+(HearoPilot's sherpa-onnx integration) sidesteps this by tracking
+`vad.isSpeechDetected()` directly instead of waiting for closed
+segments to appear in the queue.
+
+Fix: append a *preliminary* (open) segment to the return value when
+`inSpeech` is still true at the end of the probability scan. Its `t1Cs`
+is set to the last processed frame (≈ buffer end), which makes patch
+0002's existing `segmentStillOpen = lastT1S + marginS >= liveDurationS`
+check evaluate to true, and `lastComplete` stays at `-1` because no
+*final* commit happened this pass. The partial-decode branch then runs
+as designed — Parakeet is re-run on the in-progress range and emits
+`isPartial=true`.
+
+The preliminary segment is recomputed from scratch on every
+`getSegments()` call (each call begins with a `reset()` of the LSTM
+state and re-scans the buffer), so there is no cross-call state to
+maintain. When VAD eventually observes the closing silence, that pass
+returns the *closed* segment in the normal way, the for-loop in 0002
+processes it as final, the buffer is trimmed, and the next iteration
+starts fresh with no preliminary until speech resumes.
+
+Behaviour summary:
+- Continuous speech: preliminary segment present every pass; partial
+  cadence drives mid-segment isPartial=true emissions every
+  `partial_decode_interval_ms` of new audio (1.5 s default).
+- End of speech: closed segment emitted as final; preliminary absent
+  on the same pass; no double-emission.
+- Pause then resume mid-utterance: pause ≥ minSilenceDurationMs closes
+  the segment as final and trims; resumed speech opens a new
+  preliminary on the trimmed buffer; cadence restarts cleanly.
+- Cap at `maxSpeechDurationS`: the existing closed-segment path still
+  fires; preliminary covers any residual tail.
+
+Smallest possible change — does not touch SileroVad's public surface,
+StreamingProcessor, or the addon JS bridge. Backwards-compatible: a
+caller that only loops over `segments` to read finals sees no change
+because, in their normal use, the preliminary at the end will be
+re-reported as a closed segment on the next pass once silence lands,
+and they were always tolerant of "extra" segments showing up across
+calls (StreamingProcessor only acts on segments that satisfy the
+`lastT1S + marginS < liveDurationS` predicate).
+---
+ .../addon/src/model-interface/SileroVad.cpp   | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.cpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.cpp
+index 0000000..0000001 100644
+--- a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.cpp
++++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.cpp
+@@ -496,9 +496,25 @@ std::vector<SileroVad::Segment> SileroVad::getSegments(
+     }
+   }
+
+-  // Trailing speech that never closed — leave open for the next invocation
+-  // unless the caller is at end of stream (handled at the
+-  // StreamingProcessor level via the "force-process final buffer" path).
++  // Trailing speech that never closed: emit a *preliminary* (open) segment
++  // covering [speechStartFrame, numWindows-1] so the StreamingProcessor's
++  // mid-segment partial-decode branch (patch 0002) has a non-empty queue
++  // and a `lastT1S` that satisfies `segmentStillOpen`. The loop above will
++  // emit a *closed* segment in its place on the pass where silence is
++  // finally observed; that closed segment is what triggers the final
++  // commit + buffer trim.
++  //
++  // Without this, getSegments() returns an empty vector during ongoing
++  // speech, the partial branch's `!segments.empty()` check is never true,
++  // and the recognizer is run only at VAD endpoints — i.e. never as a
++  // partial. End-of-stream (force-process final buffer) is unaffected
++  // because StreamingProcessor handles that path on the JS side via
++  // endStreaming() and does not consult this segment list.
++  if (inSpeech) {
++    const int speechEndFrame = std::max(speechStartFrame + 1, numWindows - 1);
++    segments.push_back(
++        {framesToCs(speechStartFrame), framesToCs(speechEndFrame)});
++  }
+   return segments;
+ }
+
+--
+2.52.0.windows.1

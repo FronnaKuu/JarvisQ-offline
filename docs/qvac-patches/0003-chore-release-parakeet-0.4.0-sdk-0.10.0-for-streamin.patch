@@ -1,0 +1,407 @@
+From 08bdd3ebafe3b90a2f053f265b4b5b583e6c6cc6 Mon Sep 17 00:00:00 2001
+From: Helldez <74499579+Helldez@users.noreply.github.com>
+Date: Sun, 26 Apr 2026 09:27:04 +0200
+Subject: [PATCH 3/4] chore(release): parakeet 0.4.0 + sdk 0.10.0 for streaming
+ + partials
+
+Bumps both packages and adds CHANGELOG entries describing the new
+
+Silero VAD streaming and mid-segment partial decoding surfaces.
+
+- @qvac/transcription-parakeet 0.3.2 -> 0.4.0 (additive native API)
+
+- @qvac/sdk 0.9.1 -> 0.10.0 (additive client/op surface)
+
+- sdk peer range bumped to @qvac/transcription-parakeet ^0.4.0
+---
+ packages/qvac-lib-infer-parakeet/CHANGELOG.md | 14 +++
+ packages/qvac-lib-infer-parakeet/package.json |  2 +-
+ packages/sdk/CHANGELOG.md                     | 69 +++++++++++++++
+ packages/sdk/changelog/0.10.0/CHANGELOG.md    | 22 +++++
+ .../sdk/changelog/0.10.0/CHANGELOG_LLM.md     | 72 +++++++++++++++
+ packages/sdk/changelog/0.10.0/api.md          | 88 +++++++++++++++++++
+ packages/sdk/changelog/0.10.0/breaking.md     |  8 ++
+ packages/sdk/changelog/0.10.0/models.md       | 15 ++++
+ packages/sdk/package.json                     |  4 +-
+ 9 files changed, 291 insertions(+), 3 deletions(-)
+ create mode 100644 packages/sdk/changelog/0.10.0/CHANGELOG.md
+ create mode 100644 packages/sdk/changelog/0.10.0/CHANGELOG_LLM.md
+ create mode 100644 packages/sdk/changelog/0.10.0/api.md
+ create mode 100644 packages/sdk/changelog/0.10.0/breaking.md
+ create mode 100644 packages/sdk/changelog/0.10.0/models.md
+
+diff --git a/packages/qvac-lib-infer-parakeet/CHANGELOG.md b/packages/qvac-lib-infer-parakeet/CHANGELOG.md
+index ca02b28..b715d67 100644
+--- a/packages/qvac-lib-infer-parakeet/CHANGELOG.md
++++ b/packages/qvac-lib-infer-parakeet/CHANGELOG.md
+@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
+ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+ 
++## [0.4.0]
++
++### Added
++- Silero VAD v5 integration via a dedicated `Ort::Session` (`SileroVad`), with a `getSegments()` API modelled on whisper.cpp's `whisper_vad_segments_from_samples`. No new native dependency — reuses the ONNX Runtime already linked by the parakeet addon.
++- `StreamingProcessor` — VAD-driven simulated-streaming engine that segments live PCM in a background thread and feeds each detected segment to the offline Parakeet recognizer. Mirrors `qvac-lib-infer-whispercpp/.../StreamingProcessor.*`.
++- Native bindings `startStreaming` / `appendStreamingAudio` / `endStreaming` in `binding.cpp`, and a JS-level `TranscriptionParakeet.runStreaming(audioStream)` that drives them.
++- `ParakeetConfig.vadModelPath`, `TranscriptionParakeetFiles.vadModel`, and `ParakeetVadParams` (threshold, min/max speech & silence, pad, overlap) for tuning. `run()` ignores them — only `runStreaming()` consumes them.
++- Mid-segment partial decoding: while a VAD segment is still open, the recognizer is re-run every `partial_decode_interval_ms` (default 1.5 s) and emits a transcript with `isPartial=true`. The next final commit at the VAD endpoint replaces it. Setting the interval to 0 keeps the legacy final-only stream.
++- `ParakeetTypes::Transcript.isPartial` field, serialized through the addon output queue so JS consumers receive `{text, isPartial}` per segment.
++
++### Fixed
++- s16le PCM alignment in `_handleStreamingAudio`: PCM chunks delivered with an odd `byteOffset` (as pear-rpc may produce on Buffer slices) no longer crash with "start offset of Int16Array should be a multiple of 2". The chunk is now copied into an aligned buffer before reinterpretation.
++- Cancel race in `ParakeetInterface.cancel`: the JS side now waits for the native `JobEnded`/`Error` terminal frame via a `_onCancelComplete` promise before returning, so a subsequent `startStreaming()` no longer fails with "Streaming session already active".
++
+ ## [0.3.2]
+ 
+ ### Fixed
+diff --git a/packages/qvac-lib-infer-parakeet/package.json b/packages/qvac-lib-infer-parakeet/package.json
+index 3180298..6485a91 100644
+--- a/packages/qvac-lib-infer-parakeet/package.json
++++ b/packages/qvac-lib-infer-parakeet/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@qvac/transcription-parakeet",
+-  "version": "0.3.2",
++  "version": "0.4.0",
+   "description": "High-performance speech-to-text inference addon using NVIDIA Parakeet models for Bare runtime",
+   "addon": true,
+   "engines": {
+diff --git a/packages/sdk/CHANGELOG.md b/packages/sdk/CHANGELOG.md
+index d7eb342..124a74a 100644
+--- a/packages/sdk/CHANGELOG.md
++++ b/packages/sdk/CHANGELOG.md
+@@ -1,5 +1,74 @@
+ # Changelog
+ 
++## [0.10.0]
++
++📦 **NPM:** https://www.npmjs.com/package/@qvac/sdk/v/0.10.0
++
++This release brings the `transcribeStream` duplex op to Parakeet, reaching parity with Whisper for live transcription. Callers that pass a `vadModelSrc` get VAD-driven simulated streaming powered by Silero v5 inside the Parakeet addon, with optional mid-segment partial decoding for live-dictation UX. Whisper streaming is unchanged.
++
++---
++
++## ✨ Features
++
++### Parakeet streaming via `transcribeStream`
++
++The `transcribeStream` duplex op now accepts parakeet model IDs. The parakeet plugin handler routes the live PCM stream into `TranscriptionParakeet.runStreaming`, which drives the new native `StreamingProcessor` (Silero VAD + offline Parakeet recognizer). Final segments are emitted as `{text, isPartial: false}`; mid-segment partials (when enabled) as `{text, isPartial: true}`.
++
++```typescript
++import { transcribeStream } from "@qvac/sdk";
++
++const session = await transcribeStream({ modelId });
++for await (const chunk of micPcm) session.write(chunk);
++session.end();
++for await (const seg of session) {
++  if (seg.isPartial) replaceRunningTail(seg.text);
++  else commit(seg.text);
++}
++```
++
++### `vadModelSrc` and `vad_params` on the parakeet config
++
++```typescript
++loadModel({
++  modelType: "parakeet-transcription",
++  config: {
++    parakeetEncoderSrc: ENCODER,
++    parakeetDecoderSrc: DECODER,
++    parakeetPreprocessorSrc: PREPROCESSOR,
++    parakeetVocabSrc: VOCAB,
++    vadModelSrc: VAD_SILERO_5_1_2,
++    vad_params: {
++      threshold: 0.5,
++      min_silence_duration_ms: 500,
++      partial_decode_interval_ms: 1500,
++    },
++  },
++});
++```
++
++## 🔌 API Changes
++
++### `TranscribeStreamSession` iterator yields `{text, isPartial}`
++
++```typescript
++// Before
++for await (const { text } of session) commit(text);
++
++// After (parakeet partials supported)
++for await (const { text, isPartial } of session) {
++  if (isPartial) replaceTail(text);
++  else commit(text);
++}
++```
++
++## 📦 Models
++
++- No new model constants. Parakeet streaming consumes the existing `VAD_SILERO_5_1_2` constant (`silero_vad.onnx`, ~2 MB, MIT).
++
++## ⬆️ Dependencies
++
++- `@qvac/transcription-parakeet` peer range: `^0.3.1` → `^0.4.0`.
++
+ ## [0.9.1]
+ 
+ 📦 **NPM:** https://www.npmjs.com/package/@qvac/sdk/v/0.9.1
+diff --git a/packages/sdk/changelog/0.10.0/CHANGELOG.md b/packages/sdk/changelog/0.10.0/CHANGELOG.md
+new file mode 100644
+index 0000000..3172506
+--- /dev/null
++++ b/packages/sdk/changelog/0.10.0/CHANGELOG.md
+@@ -0,0 +1,22 @@
++# Changelog v0.10.0
++
++Release Date: 2026-04-26
++
++## ✨ Features
++
++- Parakeet now supports VAD-driven simulated streaming via the existing `transcribeStream` duplex op. Previously this op was Whisper-only; the parakeet plugin gains a `transcribeStream` handler that routes live PCM into the new `runStreaming` API of `@qvac/transcription-parakeet`.
++- `parakeetConfigSchema` accepts a `vadModelSrc` (Silero VAD model source) and a `vad_params` object (threshold, min/max speech & silence durations, speech pad, samples overlap, partial decode cadence). All fields are optional; setting `vadModelSrc` activates streaming, leaving it unset keeps the legacy `transcribe()` flow.
++- `transcribeStreamResponseSchema` gains an optional `isPartial` boolean. Parakeet emits live mid-segment partials (`isPartial: true`) that consumers should replace until the next final segment commit (`isPartial: false`). Whisper continues to emit final-only frames.
++- `transcribe-config` schema exposes `partial_decode_interval_ms` so callers can tune the partial cadence (0 disables partials).
++
++## 🔌 API Changes
++
++- Client `TranscribeStreamSession` iterator now yields `{text, isPartial}` instead of `{text}`. The `isPartial` field is optional in TypeScript and absent for engines that don't support partials, so existing whisper consumers are unaffected.
++
++## 📦 Models
++
++- No new model constants. Parakeet streaming consumes the existing `VAD_SILERO_5_1_2` constant (`silero_vad.onnx`, ~2 MB, MIT, [snakers4/silero-vad](https://github.com/snakers4/silero-vad)). Required only when using parakeet streaming.
++
++## ⬆️ Dependencies
++
++- `@qvac/transcription-parakeet` peer range bumped to `^0.4.0` (was `^0.3.1`) — the new streaming entrypoints live there.
+diff --git a/packages/sdk/changelog/0.10.0/CHANGELOG_LLM.md b/packages/sdk/changelog/0.10.0/CHANGELOG_LLM.md
+new file mode 100644
+index 0000000..7a03320
+--- /dev/null
++++ b/packages/sdk/changelog/0.10.0/CHANGELOG_LLM.md
+@@ -0,0 +1,72 @@
++# QVAC SDK v0.10.0 Release Notes
++
++📦 **NPM:** https://www.npmjs.com/package/@qvac/sdk/v/0.10.0
++
++This release brings the `transcribeStream` duplex op to Parakeet, reaching parity with Whisper for live transcription. Callers that pass a `vadModelSrc` get VAD-driven simulated streaming powered by Silero v5 inside the Parakeet addon, with optional mid-segment partial decoding for live-dictation UX. Whisper streaming is unchanged.
++
++---
++
++## ✨ Features
++
++### Parakeet streaming via `transcribeStream`
++
++The `transcribeStream` duplex op now accepts parakeet model IDs. The parakeet plugin handler routes the live PCM stream into `TranscriptionParakeet.runStreaming`, which drives the new native `StreamingProcessor` (Silero VAD + offline Parakeet recognizer). Final segments are emitted as `{text, isPartial: false}`; mid-segment partials (when enabled) as `{text, isPartial: true}`.
++
++```typescript
++import { transcribeStream } from "@qvac/sdk";
++
++const session = await transcribeStream({ modelId });
++for await (const chunk of micPcm) session.write(chunk);
++session.end();
++for await (const seg of session) {
++  if (seg.isPartial) replaceRunningTail(seg.text);
++  else commit(seg.text);
++}
++```
++
++### `vadModelSrc` and `vad_params` on the parakeet config
++
++```typescript
++loadModel({
++  modelType: "parakeet-transcription",
++  config: {
++    parakeetEncoderSrc: ENCODER,
++    parakeetDecoderSrc: DECODER,
++    parakeetPreprocessorSrc: PREPROCESSOR,
++    parakeetVocabSrc: VOCAB,
++    vadModelSrc: VAD_SILERO_5_1_2,     // activates streaming
++    vad_params: {
++      threshold: 0.5,
++      min_silence_duration_ms: 500,
++      partial_decode_interval_ms: 1500, // mid-segment partials
++    },
++  },
++});
++```
++
++All `vad_params` fields are optional; the addon falls back to whisper-equivalent defaults (threshold 0.5, min silence 500 ms, min speech 250 ms, max speech 30 s, pad 30 ms, overlap 0.1, partial interval 0 = disabled).
++
++## 🔌 API Changes
++
++### `TranscribeStreamSession` iterator yields `{text, isPartial}`
++
++The duplex iterator was previously typed as `AsyncIterable<{text}>`. It is now `AsyncIterable<{text, isPartial?}>`. Whisper engines do not emit `isPartial`; existing consumers that only read `text` keep working unchanged.
++
++```typescript
++// Before
++for await (const { text } of session) commit(text);
++
++// After (parakeet partials supported)
++for await (const { text, isPartial } of session) {
++  if (isPartial) replaceTail(text);
++  else commit(text);
++}
++```
++
++## 📦 Models
++
++No new model constants were added in this release. Parakeet streaming consumes the existing `VAD_SILERO_5_1_2` constant (`silero_vad.onnx`, ~2 MB, MIT, [snakers4/silero-vad](https://github.com/snakers4/silero-vad)). Whisper streaming is unaffected and continues to use its built-in `whisper_vad_context`.
++
++## ⬆️ Dependencies
++
++- `@qvac/transcription-parakeet` peer range: `^0.3.1` → `^0.4.0`. The new streaming entrypoints (`runStreaming`, `startStreaming`, `appendStreamingAudio`, `endStreaming`) ship in 0.4.0.
+diff --git a/packages/sdk/changelog/0.10.0/api.md b/packages/sdk/changelog/0.10.0/api.md
+new file mode 100644
+index 0000000..05eec3a
+--- /dev/null
++++ b/packages/sdk/changelog/0.10.0/api.md
+@@ -0,0 +1,88 @@
++# 🔌 API Changes v0.10.0
++
++## Parakeet streaming via `transcribeStream`
++
++PR: [#TBD]
++
++The `transcribeStream` duplex op now accepts parakeet model IDs. The parakeet
++plugin handler routes the live PCM stream into the new
++`TranscriptionParakeet.runStreaming` entrypoint, which drives a Silero-VAD-
++based streaming engine inside the parakeet addon. Whisper streaming is
++unchanged.
++
++```typescript
++import { transcribeStream } from "@qvac/sdk";
++
++// Duplex session: stream audio in, stream transcripts out.
++const session = await transcribeStream({ modelId });
++for await (const chunk of micPcm) session.write(chunk);
++session.end();
++
++for await (const seg of session) {
++  if (seg.isPartial) replaceRunningTail(seg.text);
++  else commit(seg.text);
++}
++session.destroy();
++```
++
++---
++
++## `vadModelSrc` and `vad_params` on the parakeet config
++
++PR: [#TBD]
++
++`parakeetConfigSchema` accepts an optional `vadModelSrc` (the Silero VAD model
++source) and an optional `vad_params` object. Setting `vadModelSrc` activates
++the streaming path; leaving it unset keeps the legacy one-shot `transcribe()`
++flow untouched.
++
++```typescript
++import { loadModel, VAD_SILERO_5_1_2 } from "@qvac/sdk";
++
++await loadModel({
++  modelType: "parakeet-transcription",
++  config: {
++    parakeetEncoderSrc: ENCODER,
++    parakeetDecoderSrc: DECODER,
++    parakeetPreprocessorSrc: PREPROCESSOR,
++    parakeetVocabSrc: VOCAB,
++    vadModelSrc: VAD_SILERO_5_1_2,        // activates streaming
++    vad_params: {                         // all fields optional
++      threshold: 0.5,
++      min_silence_duration_ms: 500,
++      min_speech_duration_ms: 250,
++      max_speech_duration_s: 30,
++      speech_pad_ms: 30,
++      samples_overlap: 0.1,
++      partial_decode_interval_ms: 1500,   // 0 disables partials
++    },
++  },
++});
++```
++
++The addon falls back to whisper-equivalent defaults for any field not set on
++`vad_params`. Setting `partial_decode_interval_ms: 0` opts out of mid-segment
++partial decoding (final-only stream).
++
++---
++
++## `TranscribeStreamSession` iterator yields `{text, isPartial?}`
++
++PR: [#TBD]
++
++`transcribeStreamResponseSchema` gains an optional `isPartial: boolean`.
++Parakeet emits live mid-segment partials (`isPartial: true`) that consumers
++should replace until the next final commit (`isPartial: false`). Whisper
++continues to emit final-only frames; for engines that don't set the flag the
++field is simply absent and existing consumers are unaffected.
++
++```typescript
++// Before
++for await (const { text } of session) commit(text);
++
++// After (parakeet partials supported)
++for await (const { text, isPartial } of session) {
++  if (isPartial) replaceTail(text);
++  else commit(text);
++}
++```
+diff --git a/packages/sdk/changelog/0.10.0/breaking.md b/packages/sdk/changelog/0.10.0/breaking.md
+new file mode 100644
+index 0000000..c0f1775
+--- /dev/null
++++ b/packages/sdk/changelog/0.10.0/breaking.md
+@@ -0,0 +1,8 @@
++# 💥 Breaking Changes v0.10.0
++
++No breaking changes.
++
++All new fields on `parakeetConfigSchema` (`vadModelSrc`, `vad_params`) and on
++`transcribeStreamResponseSchema` (`isPartial`) are optional. Existing
++consumers of `transcribe()`, the EOU streaming path, and the whisper
++`transcribeStream` flow are unaffected.
+diff --git a/packages/sdk/changelog/0.10.0/models.md b/packages/sdk/changelog/0.10.0/models.md
+new file mode 100644
+index 0000000..f703caa
+--- /dev/null
++++ b/packages/sdk/changelog/0.10.0/models.md
+@@ -0,0 +1,15 @@
++# 📦 Model Changes v0.10.0
++
++No new model constants were added in this release.
++
++## Newly consumed by parakeet streaming
++
++```
++VAD_SILERO_5_1_2
++```
++
++The constant already exists in the SDK model registry. Parakeet streaming
++loads `silero_vad.onnx` (~2 MB, MIT, [snakers4/silero-vad](https://github.com/snakers4/silero-vad))
++through this constant when `vadModelSrc` is set on the parakeet config.
++Whisper streaming is unaffected and continues to use its built-in
++`whisper_vad_context`.
+diff --git a/packages/sdk/package.json b/packages/sdk/package.json
+index fda2011..81c0080 100644
+--- a/packages/sdk/package.json
++++ b/packages/sdk/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@qvac/sdk",
+-  "version": "0.9.1",
++  "version": "0.10.0",
+   "license": "Apache-2.0",
+   "repository": {
+     "type": "git",
+@@ -183,7 +183,7 @@
+     "@qvac/ocr-onnx": "^0.4.2",
+     "@qvac/rag": "^0.4.4",
+     "@qvac/registry-client": "^0.4.1",
+-    "@qvac/transcription-parakeet": "^0.3.1",
++    "@qvac/transcription-parakeet": "^0.4.0",
+     "@qvac/transcription-whispercpp": "^0.6.1",
+     "@qvac/translation-nmtcpp": "^2.0.1",
+     "@qvac/tts-onnx": "^0.8.2",
+-- 
+2.52.0.windows.1
+

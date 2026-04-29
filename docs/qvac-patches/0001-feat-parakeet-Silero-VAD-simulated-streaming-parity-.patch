@@ -1,8 +1,8 @@
-From 2ccca4d92ddf694d7e31dd4ce670c8bcaea7122f Mon Sep 17 00:00:00 2001
+From fb8ca6eb0396497794ee894e132d7b7f894cf4fb Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 24 Apr 2026 12:00:24 +0200
-Subject: [PATCH] feat(parakeet): Silero VAD simulated streaming (parity with
- whisper)
+Subject: [PATCH 1/4] feat(parakeet): Silero VAD simulated streaming (parity
+ with whisper)
 
 ---
  .../qvac-lib-infer-parakeet/CMakeLists.txt    |   4 +
@@ -12,7 +12,7 @@ Subject: [PATCH] feat(parakeet): Silero VAD simulated streaming (parity with
  .../addon/src/model-interface/SileroVad.cpp   | 222 ++++++++++++++
  .../addon/src/model-interface/SileroVad.hpp   |  86 ++++++
  .../model-interface/StreamingProcessor.cpp    | 286 ++++++++++++++++++
- .../model-interface/StreamingProcessor.hpp    |  82 +++++
+ .../model-interface/StreamingProcessor.hpp    |  96 ++++++
  .../parakeet/ParakeetConfig.hpp               |   3 +
  .../parakeet/ParakeetModel.hpp                |  12 +
  packages/qvac-lib-infer-parakeet/index.d.ts   |  41 +++
@@ -20,7 +20,7 @@ Subject: [PATCH] feat(parakeet): Silero VAD simulated streaming (parity with
  packages/qvac-lib-infer-parakeet/parakeet.js  |  52 ++++
  packages/sdk/schemas/transcription-config.ts  |   3 +
  .../plugins/parakeet-transcription/plugin.ts  |  65 +++-
- 15 files changed, 1135 insertions(+), 7 deletions(-)
+ 15 files changed, 1149 insertions(+), 7 deletions(-)
  create mode 100644 packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.cpp
  create mode 100644 packages/qvac-lib-infer-parakeet/addon/src/model-interface/SileroVad.hpp
  create mode 100644 packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.cpp
@@ -889,10 +889,10 @@ index 0000000..444a957
 +} // namespace qvac_lib_infer_parakeet
 diff --git a/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.hpp b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.hpp
 new file mode 100644
-index 0000000..1c0b289
+index 0000000..45e87bd
 --- /dev/null
 +++ b/packages/qvac-lib-infer-parakeet/addon/src/model-interface/StreamingProcessor.hpp
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,96 @@
 +#pragma once
 +
 +#include <condition_variable>
@@ -921,6 +921,10 @@ index 0000000..1c0b289
 +    static constexpr int kDefaultSampleRate = 16000;
 +    static constexpr float kDefaultMaxSpeechDurationS = 30.0F;
 +    static constexpr float kVadRunIntervalS = 0.3F;
++    // Default cadence for in-segment partial decoding: re-run the recognizer
++    // every 1.5 s of new audio inside a still-open VAD segment (24 000
++    // samples @ 16 kHz). 0 disables partial decoding entirely (final-only).
++    static constexpr float kDefaultPartialDecodeIntervalS = 1.5F;
 +
 +    int sampleRate = kDefaultSampleRate;
 +    std::string vadModelPath;
@@ -934,6 +938,11 @@ index 0000000..1c0b289
 +        static_cast<int>(kDefaultMaxSpeechDurationS) * kDefaultSampleRate;
 +    int vadRunIntervalSamples =
 +        static_cast<int>(kVadRunIntervalS * kDefaultSampleRate);
++    // Minimum new audio (samples) accumulated since the last partial decode
++    // before the in-progress segment is re-decoded and emitted as a partial.
++    // Set to 0 to disable mid-segment partials (legacy behavior — final-only).
++    int partialDecodeIntervalSamples =
++        static_cast<int>(kDefaultPartialDecodeIntervalS * kDefaultSampleRate);
 +  };
 +
 +  StreamingProcessor(
@@ -954,7 +963,7 @@ index 0000000..1c0b289
 +
 +private:
 +  void processLoop();
-+  void processAudioRange(int startSample, int endSample);
++  void processAudioRange(int startSample, int endSample, bool isPartial);
 +
 +  ParakeetModel& model_;
 +  std::shared_ptr<qvac_lib_inference_addon_cpp::OutputQueue> outputQueue_;
@@ -970,6 +979,11 @@ index 0000000..1c0b289
 +
 +  std::unique_ptr<SileroVad> vad_;
 +  int bufferSizeAtLastVadRun_ = 0;
++  // Buffer size (in samples, on processBuffer_) at the moment we last
++  // emitted a partial result for the currently-open VAD segment. Reset to 0
++  // every time the buffer is trimmed after a final segment commit, so the
++  // partial cadence restarts from scratch on each fresh utterance.
++  int bufferSizeAtLastPartialDecode_ = 0;
 +
 +  std::thread thread_;
 +};
