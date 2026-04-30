@@ -9,6 +9,13 @@ export const AppConfig = {
     minSoftBoundaryChars: 20,
     hardBoundaries: /[.!?;]/,
     softBoundaries: /[,:—]/,
+    // Hard cap on a single clause sent to the TTS engine. Supertonic's text
+    // encoder silently truncates inputs past its internal sequence limit, so
+    // unbounded clauses (e.g. when LLM tokens carry trailing whitespace and
+    // the boundary char ends up mid-token) cause whole sentences to drop out
+    // of the spoken audio. The streamer falls back to the last whitespace
+    // before this cap when no natural boundary has fired in time.
+    maxClauseChars: 200,
     // Delay between TTS finishing and microphone re-activating.
     // Prevents the system from capturing its own speaker output as user speech.
     // Set to 1500ms: Android speakers can ring/echo for up to ~1s after playback

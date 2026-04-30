@@ -46,6 +46,7 @@ export default function ConversationScreen() {
   const messages = useConversationStore((s) => s.messages);
   const activeConversation = useConversationStore((s) => s.activeConversation());
   const ensureResponder = useBootstrapStore((s) => s.ensureResponder);
+  const ensureTts = useBootstrapStore((s) => s.ensureTts);
   const settings = useSettingsStore((s) => s.settings);
   const mode = activeConversation?.mode ?? 'conversation';
   const sourceLang = activeConversation?.sourceLang ?? null;
@@ -85,6 +86,10 @@ export default function ConversationScreen() {
     // the model is already loaded and covers the path of opening an existing
     // chat after an app restart.
     void ensureResponder(mode, { sourceLang, targetLang });
+    // Switching TTS engine in Settings after boot requires loading the new
+    // engine's model — boot only loads whichever engine was selected at
+    // startup. ensureTts is idempotent (no-op when already loaded or 'system').
+    void ensureTts();
 
     const recorder = Platform.createAudioRecorder({
       onStateChange: () => {},

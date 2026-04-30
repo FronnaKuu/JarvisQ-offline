@@ -164,6 +164,7 @@ class SttServiceClass implements ISttService {
 
     let chunkCount = 0;
     let drainTimer: ReturnType<typeof setTimeout> | null = null;
+    let drainGraceFired = false;
     // Pump PCM chunks into the duplex session in the background. The server
     // streams partial transcripts back through the session's AsyncIterable,
     // which we consume synchronously below.
@@ -196,6 +197,7 @@ class SttServiceClass implements ISttService {
         if (grace !== undefined && grace > 0) {
           drainTimer = setTimeout(() => {
             console.warn(`[transcribeLive] drain grace ${grace}ms elapsed, destroying session`);
+            drainGraceFired = true;
             session.destroy?.();
           }, grace);
         }
@@ -226,15 +228,29 @@ class SttServiceClass implements ISttService {
         }
       }
     } catch (err) {
-      console.error('[transcribeLive] session iteration threw', err);
-      session.destroy?.();
-      // Drain timeout no longer needed once we've abandoned the session.
-      if (drainTimer) clearTimeout(drainTimer);
-      throw err;
+      if (drainGraceFired) {
+        // Expected path: parakeet's StreamingProcessor doesn't flush an
+        // open Silero segment as final on session.end(), so the iterator
+        // hangs until the drain timer fires session.destroy(), which
+        // surfaces here as a "Stream was destroyed" throw. Treat it as a
+        // graceful close and return what we accumulated — the caller is
+        // responsible for promoting any still-open runningPartial.
+        console.warn('[transcribeLive] iterator closed by drain grace, returning fullText');
+      } else {
+        console.error('[transcribeLive] session iteration threw', err);
+        session.destroy?.();
+        if (drainTimer) clearTimeout(drainTimer);
+        throw err;
+      }
     } finally {
       if (drainTimer) clearTimeout(drainTimer);
     }
-    await pumpPromise;
+    try {
+      await pumpPromise;
+    } catch {
+      // Pump errors are already logged inside the IIFE; don't override
+      // a graceful drain-grace return with a redundant throw.
+    }
     console.log(`[transcribeLive] returning, segments=${segmentCount}, fullTextLen=${fullText.length}`);
     return fullText;
   }

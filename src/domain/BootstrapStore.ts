@@ -46,6 +46,12 @@ interface BootstrapState {
     mode: ConversationMode,
     opts?: ResponderLoadOptions,
   ) => Promise<void>;
+  /**
+   * Idempotent TTS load. Conversation screen calls this when settings.ttsEngine
+   * changes — boot only loads what was selected at startup, so switching
+   * engine after boot needs a follow-up load.
+   */
+  ensureTts: () => Promise<void>;
   reset: () => void;
 }
 
@@ -166,6 +172,40 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
     };
 
     await bootstrap.ensureResponderReady(mode, settings, modelIds, opts, handlers);
+  },
+
+  ensureTts: async () => {
+    const settings = useSettingsStore.getState().settings;
+    const modelIds = useSettingsStore.getState().modelIds;
+
+    const handlers: BootstrapHandlers = {
+      onServiceStart: (kind, label) => {
+        set((s) => ({
+          services: {
+            ...s.services,
+            [kind]: { ...s.services[kind], label, phase: 'active' },
+          },
+        }));
+      },
+      onServiceProgress: (kind, progress) => {
+        set((s) => ({
+          services: {
+            ...s.services,
+            [kind]: { ...s.services[kind], progress },
+          },
+        }));
+      },
+      onServiceDone: (kind) => {
+        set((s) => ({
+          services: {
+            ...s.services,
+            [kind]: { ...s.services[kind], phase: 'done' },
+          },
+        }));
+      },
+    };
+
+    await bootstrap.ensureTts(settings, modelIds, handlers);
   },
 
   reset: () => set({

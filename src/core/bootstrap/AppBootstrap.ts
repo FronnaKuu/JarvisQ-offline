@@ -87,18 +87,35 @@ export class AppBootstrap {
       handlers.onServiceDone?.('stt');
     }
 
+    await this.ensureTts(settings, modelIds, handlers);
+  }
+
+  /**
+   * Idempotent TTS load. Called from boot AND from the conversation screen
+   * when settings.ttsEngine changes — switching from 'system' to a Supertonic
+   * profile after boot would otherwise leave the model unloaded, so the first
+   * synthesize() throws "TTS model not loaded" and Retry can't recover.
+   */
+  async ensureTts(
+    settings: AppSettings,
+    modelIds: BootstrapModelIds,
+    handlers: BootstrapHandlers = {},
+  ): Promise<void> {
     if (settings.ttsEngine === 'system') {
       handlers.onServiceStart?.('tts', 'System TTS');
       handlers.onServiceDone?.('tts');
-    } else if (!TtsService.isLoaded) {
-      handlers.onServiceStart?.('tts', ttsProfile.label);
-      await TtsService.load(
-        ttsProfile.buildLoadConfig(settings.useGpu, settings.ttsSpeed, 'en'),
-        { fileSystem: getPlatform().fileSystem },
-        (p) => handlers.onServiceProgress?.('tts', toSnapshot(p)),
-      );
-      handlers.onServiceDone?.('tts');
+      return;
     }
+    if (TtsService.isLoaded) return;
+    const ttsProfile =
+      TTS_PROFILES[modelIds.ttsModelId] ?? TTS_PROFILES[DEFAULT_TTS_PROFILE_ID]!;
+    handlers.onServiceStart?.('tts', ttsProfile.label);
+    await TtsService.load(
+      ttsProfile.buildLoadConfig(settings.useGpu, settings.ttsSpeed, 'en'),
+      { fileSystem: getPlatform().fileSystem },
+      (p) => handlers.onServiceProgress?.('tts', toSnapshot(p)),
+    );
+    handlers.onServiceDone?.('tts');
   }
 
   /**
