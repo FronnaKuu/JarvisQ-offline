@@ -17,6 +17,7 @@ import { ChatBubble } from '@ui/components/ChatBubble';
 import { DictationBubble } from '@ui/components/DictationBubble';
 import { VoiceButton } from '@ui/components/VoiceButton';
 import { TextComposer } from '@ui/components/TextComposer';
+import { ModelLoadingOverlay } from '@ui/components/ModelLoadingOverlay';
 import { VoicePipeline } from '@core/pipeline/VoicePipeline';
 import { LlmResponder } from '@core/pipeline/LlmResponder';
 import { TranslationResponder } from '@core/pipeline/TranslationResponder';
@@ -47,6 +48,8 @@ export default function ConversationScreen() {
   const activeConversation = useConversationStore((s) => s.activeConversation());
   const ensureResponder = useBootstrapStore((s) => s.ensureResponder);
   const ensureTts = useBootstrapStore((s) => s.ensureTts);
+  const llmServiceStatus = useBootstrapStore((s) => s.services.llm);
+  const translatorServiceStatus = useBootstrapStore((s) => s.services.translator);
   const settings = useSettingsStore((s) => s.settings);
   const mode = activeConversation?.mode ?? 'conversation';
   const sourceLang = activeConversation?.sourceLang ?? null;
@@ -435,6 +438,11 @@ export default function ConversationScreen() {
           )}
         </View>
       </KeyboardAvoidingView>
+
+      <ModelLoadingOverlay
+        visible={(mode === 'translation' ? translatorServiceStatus : llmServiceStatus).phase === 'active'}
+        label={(mode === 'translation' ? translatorServiceStatus : llmServiceStatus).label}
+      />
 
       <Snackbar
         visible={pipelineError !== null}

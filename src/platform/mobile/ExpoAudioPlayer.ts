@@ -1,14 +1,20 @@
 // ---- Expo Audio Player (Mobile) ------------------------------------------
 // Implements IAudioPlayer using expo-audio for iOS and Android.
 //
-// Playback strategy (pipelined):
+// Playback strategy (ping-pong over two persistent players):
 //   - `addChunk` buffers Float32 PCM chunks delivered by the TTS engine.
 //   - `playAndClear` commits the buffered chunks as one clause and CHAINS
 //     its playback onto an internal promise tail. It resolves as soon as
 //     the clause is queued — NOT when audio ends — so the caller (TTS
 //     engine) can immediately start synthesising the next clause while
-//     this one plays. Overlap kills the ~1 s inter-clause gap that made
-//     expo-av's Sound-per-clause approach audible.
+//     this one plays.
+//   - Two persistent AudioPlayer instances alternate per clause. Calling
+//     `replace()` on a single player tore down the previous AudioTrack
+//     while the next one was already starting; on Android the old track's
+//     teardown landed a `pause` on the freshly-started track (same audio
+//     session id), and the middle clause produced ~0 frames of audio. With
+//     ping-pong each clause runs on its own player, so source-swap
+//     teardown of clause N can never touch clause N+1.
 //   - `drain` is awaited by the pipeline before firing "speaking done" so
 //     the last clause's playback completes before the phase transition.
 //
@@ -21,23 +27,31 @@
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import type { AudioPlayer, AudioStatus } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
+import { AppConfig } from '@core/config/AppConfig';
 import type { IAudioPlayer } from '@core/ports/IAudioPlayer';
 
-const TEMP_PREFIX = 'tts_';
-// Android low-level audio drops a handful of samples on pipeline start-up;
-// a short silent lead-in ensures the first phoneme is not clipped.
-const LEAD_IN_MS = 80;
+const {
+  leadInMs,
+  finishTimeoutMarginMs,
+  tempFilePrefix,
+  statusUpdateIntervalMs,
+  stopDrainTimeoutMs,
+} = AppConfig.audio;
+
+const PLAYER_COUNT = 2;
 
 export class ExpoAudioPlayer implements IAudioPlayer {
   private chunks: Float32Array[] = [];
   private sampleRate = 44100;
-  private player: AudioPlayer | null = null;
+  private players: Array<AudioPlayer | null> = new Array(PLAYER_COUNT).fill(null);
+  /** Round-robin index for the next clause to be assigned a player. */
+  private nextPlayerIndex = 0;
   private audioModeConfigured = false;
   /**
    * Promise chain of queued playbacks. Each `playAndClear` call appends a
-   * `.then()` that awaits the previous clause's playback before swapping
-   * the player's source and kicking off the new one. Starts as a resolved
-   * promise so the first clause's playback runs immediately.
+   * `.then()` that awaits the previous clause's playback before starting
+   * the new one on the next ping-pong slot. Starts as a resolved promise
+   * so the first clause's playback runs immediately.
    */
   private playbackTail: Promise<void> = Promise.resolve();
   private stopped = false;
@@ -58,22 +72,24 @@ export class ExpoAudioPlayer implements IAudioPlayer {
     this.chunks = [];
     const sampleRate = this.sampleRate;
 
-    const leadSamples = Math.round((LEAD_IN_MS / 1000) * sampleRate);
+    const leadSamples = Math.round((leadInMs / 1000) * sampleRate);
     const padded = new Float32Array(leadSamples + merged.length);
     padded.set(merged, leadSamples);
     const wav = encodeWav(padded, sampleRate);
     const b64 = wavToBase64(wav);
 
-    const tempUri = `${FileSystem.cacheDirectory ?? ''}${TEMP_PREFIX}${Date.now()}_${Math.floor(Math.random() * 1e6)}.wav`;
+    const tempUri = `${FileSystem.cacheDirectory ?? ''}${tempFilePrefix}${Date.now()}_${Math.floor(Math.random() * 1e6)}.wav`;
 
     // Writing the WAV to disk is synchronous-ish but on RN's JS thread —
     // kicking it off here means the file is ready by the time the
-    // playback tail wants to swap sources.
+    // playback tail wants to start the new clause.
     const writePromise = FileSystem.writeAsStringAsync(tempUri, b64, {
       encoding: FileSystem.EncodingType.Base64,
     });
 
-    const durationMs = (padded.length / sampleRate) * 1000 + 1000;
+    const durationMs = (padded.length / sampleRate) * 1000 + finishTimeoutMarginMs;
+    const slot = this.nextPlayerIndex;
+    this.nextPlayerIndex = (this.nextPlayerIndex + 1) % PLAYER_COUNT;
 
     this.playbackTail = this.playbackTail
       .catch(() => {
@@ -87,7 +103,7 @@ export class ExpoAudioPlayer implements IAudioPlayer {
           return;
         }
         await this.ensureAudioMode();
-        const player = this.ensurePlayer();
+        const player = this.ensurePlayer(slot);
         try {
           player.replace({ uri: tempUri });
           player.play();
@@ -107,9 +123,10 @@ export class ExpoAudioPlayer implements IAudioPlayer {
   async stop(): Promise<void> {
     this.stopped = true;
     this.chunks = [];
-    if (this.player) {
+    for (const player of this.players) {
+      if (!player) continue;
       try {
-        this.player.pause();
+        player.pause();
       } catch {
         // ignore — player may already be idle
       }
@@ -118,7 +135,7 @@ export class ExpoAudioPlayer implements IAudioPlayer {
     // move on. Don't await too long — a malfunctioning player could hang.
     await Promise.race([
       this.playbackTail.catch(() => {}),
-      new Promise<void>((resolve) => setTimeout(resolve, 250)),
+      new Promise<void>((resolve) => setTimeout(resolve, stopDrainTimeoutMs)),
     ]);
   }
 
@@ -140,10 +157,12 @@ export class ExpoAudioPlayer implements IAudioPlayer {
     this.audioModeConfigured = true;
   }
 
-  private ensurePlayer(): AudioPlayer {
-    if (this.player) return this.player;
-    this.player = createAudioPlayer(null, { updateInterval: 500 });
-    return this.player;
+  private ensurePlayer(slot: number): AudioPlayer {
+    const existing = this.players[slot];
+    if (existing) return existing;
+    const created = createAudioPlayer(null, { updateInterval: statusUpdateIntervalMs });
+    this.players[slot] = created;
+    return created;
   }
 
   private waitForFinish(player: AudioPlayer, timeoutMs: number): Promise<void> {

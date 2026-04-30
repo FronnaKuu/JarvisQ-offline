@@ -196,6 +196,27 @@ export const AppConfig = {
     defaultTopP: 0.9,
   },
 
+  // Audio playback (mobile)
+  audio: {
+    // Short silent lead-in inserted before the first sample of every clause.
+    // Android's low-level audio drops a handful of frames when an AudioTrack
+    // starts; the silence absorbs that loss so the first phoneme is intact.
+    leadInMs: 80,
+    // Safety margin added on top of the calculated audio duration when
+    // waiting for didJustFinish. Bounds the wait so a missed status event
+    // can't hang the playback chain.
+    finishTimeoutMarginMs: 1000,
+    // Filename prefix for transient WAV scratch files written to the app's
+    // cache directory and deleted after each clause has played.
+    tempFilePrefix: 'tts_',
+    // Status update interval requested from expo-audio. Kept tight enough
+    // that didJustFinish is not delayed past the safety margin above.
+    statusUpdateIntervalMs: 500,
+    // Hard cap on stop()'s wait for the playback chain to settle. A
+    // malfunctioning player must not block UI teardown indefinitely.
+    stopDrainTimeoutMs: 250,
+  },
+
   // TTS configuration
   tts: {
     defaultVoice: 'F1',
