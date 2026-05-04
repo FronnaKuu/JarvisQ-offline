@@ -141,3 +141,77 @@ jobs:
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.checksum }}
           fail_on_unmatched_files: true
+
+  windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck + unit tests
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Bundle QVAC Bare worker
+        # Generates qvac/worker.entry.mjs + qvac/addons.manifest.json from
+        # the plugins listed in qvac.config.json. electron-builder picks
+        # them up via `extraResources` and `asarUnpack` so the SDK's
+        # node-rpc-client can find the worker at runtime.
+        run: npm run desktop:bundle-worker
+
+      - name: Build NSIS installer
+        # Runs scripts/build-desktop.mjs (esbuild bundles the Electron
+        # main into build/desktop/) then electron-builder for win-x64.
+        # Output: release/desktop/win/JarvisQ-<version>-x64.exe
+        run: npm run desktop:dist:win
+
+      - name: Locate installer + compute SHA256
+        id: package
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $artifact = "release/desktop/win/JarvisQ-$version-x64.exe"
+          if (-not (Test-Path $artifact)) {
+            Write-Error "Expected installer not found at $artifact"
+            exit 1
+          }
+          $hash = (Get-FileHash -Path $artifact -Algorithm SHA256).Hash.ToLower()
+          $leaf = Split-Path $artifact -Leaf
+          $sidecar = "$artifact.sha256"
+          "$hash  $leaf" | Out-File -Encoding ascii -FilePath $sidecar
+          "artifact=$artifact"  | Out-File -Append -FilePath $env:GITHUB_OUTPUT
+          "checksum=$sidecar"   | Out-File -Append -FilePath $env:GITHUB_OUTPUT
+          "version=$version"    | Out-File -Append -FilePath $env:GITHUB_OUTPUT
+
+      - name: Upload as workflow artifact (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-${{ steps.package.outputs.version }}
+          path: |
+            ${{ steps.package.outputs.artifact }}
+            ${{ steps.package.outputs.checksum }}
+          retention-days: 30
+
+      - name: Attach installer + checksum to GitHub Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.package.outputs.artifact }}
+            ${{ steps.package.outputs.checksum }}
+          fail_on_unmatched_files: true
