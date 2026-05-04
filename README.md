@@ -1,5 +1,10 @@
 # JarvisQ
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/Helldez/JarvisQ/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Helldez/JarvisQ/actions/workflows/ci.yml)
+[![Release](https://github.com/Helldez/JarvisQ/actions/workflows/release.yml/badge.svg)](https://github.com/Helldez/JarvisQ/actions/workflows/release.yml)
+<a href="https://github.com/tetherto/qvac"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tetherto/qvac/main/docs/branding/qvac-badge-inline-green-dark.svg"><img alt="Built with QVAC" src="https://raw.githubusercontent.com/tetherto/qvac/main/docs/branding/qvac-badge-inline-green-light.svg"></picture></a>
+
 Private, on-device voice assistant — STT → LLM → TTS pipeline running fully
 locally on the user's hardware. **No data leaves the device.**
 
