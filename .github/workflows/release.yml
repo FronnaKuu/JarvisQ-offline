@@ -152,6 +152,24 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
 
+      - name: Disable Windows Defender real-time monitoring
+        shell: pwsh
+        # GitHub-hosted Windows runners enable Defender by default, which
+        # quarantines or locks the unsigned NSIS installer that
+        # electron-builder produces. The result is a "Command failed:
+        # ...x64.exe ... Exit code: null" failure when electron-builder
+        # tries to read the freshly built installer's metadata. Excluding
+        # the workspace and disabling real-time scanning is the standard
+        # mitigation; the runner is destroyed after the job so the
+        # weakened state has no lasting effect.
+        run: |
+          try {
+            Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction Stop
+            Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop
+          } catch {
+            Write-Warning "Could not adjust Defender (already off?): $_"
+          }
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
