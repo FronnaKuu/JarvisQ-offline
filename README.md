@@ -3,7 +3,7 @@
 Private, on-device voice assistant — STT → LLM → TTS pipeline running fully
 locally on the user's hardware. **No data leaves the device.**
 
-Built on top of the [Tether QVAC SDK](https://github.com/tetherto/qvac-sdk)
+Built on top of the [Tether QVAC SDK](https://github.com/tetherto/qvac)
 (`@qvac/sdk`). Currently ships as an Expo + React Native application targeting
 Android, with a Windows / macOS / Linux desktop target via Electron. The
 codebase follows a **hexagonal / ports-and-adapters** architecture so the same

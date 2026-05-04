@@ -32,7 +32,7 @@ Out of scope (report upstream instead):
 
 - Vulnerabilities in `@qvac/sdk`, `@qvac/transcription-*`, `@qvac/llm-*`,
   `@qvac/tts-*`, `@qvac/translation-*` — please report at
-  [tetherto/qvac-sdk](https://github.com/tetherto/qvac-sdk).
+  [tetherto/qvac](https://github.com/tetherto/qvac).
 - Vulnerabilities in third-party model weights (Whisper, Parakeet, Qwen,
   Supertonic, Silero, Bergamot) — report to the model maintainers.
 - Vulnerabilities in `expo-*`, `react-native-*`, `electron`, or any other

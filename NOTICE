@@ -5,7 +5,7 @@ This product includes software developed by the JarvisQ project
 (https://github.com/Helldez/JarvisQ).
 
 This product is built on top of the Tether QVAC SDK
-(https://github.com/tetherto/qvac-sdk), distributed as the npm package
+(https://github.com/tetherto/qvac), distributed as the npm package
 `@qvac/sdk`. JarvisQ is an independent project and is not affiliated with
 or endorsed by Tether. "QVAC" is a trademark of Tether; this project does
 not claim any rights to that mark and references it only to describe the
