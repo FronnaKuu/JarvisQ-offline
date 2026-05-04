@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "JarvisQVAC",
-    "slug": "jarvisqvac",
-    "version": "1.0.3",
+    "name": "JarvisQ",
+    "slug": "jarvisq",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
-    "scheme": "jarvisqvac",
+    "scheme": "jarvisq",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "JarvisQVAC needs microphone access for real-time voice recognition."
+        "NSMicrophoneUsageDescription": "JarvisQ needs microphone access for real-time voice recognition."
       }
     },
     "android": {
@@ -26,16 +26,13 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "versionCode": 3,
+      "versionCode": 4,
       "permissions": [
-        "android.permission.RECORD_AUDIO",
-        "android.permission.INTERNET",
-        "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.RECORD_AUDIO",
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE"
       ],
-      "package": "com.anonymous.jarvisqvac"
+      "package": "app.jarvisq.mobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"

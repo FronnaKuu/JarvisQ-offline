@@ -269,11 +269,11 @@ export default function SettingsScreen() {
           About
         </Text>
         <Text variant="bodySmall" style={styles.about}>
-          JarvisQVAC -- on-device AI voice assistant{'\n'}
-          STT: Whisper / Parakeet (qvac){'\n'}
-          LLM: llama.cpp (qvac){'\n'}
-          TTS: Supertonic ONNX (qvac){'\n'}
-          Backend: QVAC by Tether.to
+          JarvisQ -- on-device AI voice assistant{'\n'}
+          STT: Whisper / Parakeet (QVAC SDK){'\n'}
+          LLM: llama.cpp (QVAC SDK){'\n'}
+          TTS: Supertonic ONNX (QVAC SDK){'\n'}
+          Backend: Tether QVAC SDK (independent project)
         </Text>
       </ScrollView>
     </SafeAreaView>

@@ -307,7 +307,7 @@ export default function ConversationScreen() {
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <Appbar.Header style={styles.header} elevated={false} statusBarHeight={0}>
         <Appbar.Content
-          title="JarvisQVAC"
+          title="JarvisQ"
           titleStyle={styles.headerTitle}
           subtitle={activeConversation?.title}
           subtitleStyle={styles.headerSubtitle}
@@ -442,6 +442,7 @@ export default function ConversationScreen() {
       <ModelLoadingOverlay
         visible={(mode === 'translation' ? translatorServiceStatus : llmServiceStatus).phase === 'active'}
         label={(mode === 'translation' ? translatorServiceStatus : llmServiceStatus).label}
+        progress={(mode === 'translation' ? translatorServiceStatus : llmServiceStatus).progress}
       />
 
       <Snackbar

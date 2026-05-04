@@ -32,9 +32,12 @@ interface BootstrapState {
   errorMessage: string | null;
   services: Record<ServiceKind, ServiceStatus>;
   /**
-   * Loads the always-on services (STT + TTS). Does NOT auto-create a
-   * conversation — the mode picker is responsible for that, so the first
-   * launch flow becomes: bootstrap → mode picker → chat.
+   * Loads STT, TTS, and the default conversation responder (LLM) up front
+   * so the user has zero wait when entering a conversation chat. Bergamot
+   * still loads lazily when the user picks a translation pair, since the
+   * pair is unknown at boot and the translator is mutex with the LLM on
+   * RAM. Does NOT auto-create a conversation — the mode picker is
+   * responsible for that.
    */
   start: () => Promise<void>;
   /**
@@ -84,10 +87,11 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
       errorMessage: null,
       services: {
         stt: { label: labels.stt, phase: 'pending', progress: null },
-        // llm + translator stay pending — they are loaded lazily when the
-        // user enters a chat of the matching mode.
         llm: { label: labels.llm, phase: 'pending', progress: null },
         tts: { label: labels.tts, phase: 'pending', progress: null },
+        // Translator stays pending — it loads lazily when the user picks
+        // a translation pair in the mode picker (LLM and translator are
+        // mutex on RAM, so we cannot pre-load both).
         translator: { label: labels.translator, phase: 'pending', progress: null },
       },
     });
@@ -121,6 +125,17 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
 
     try {
       await bootstrap.ensureAlwaysOn(settings, modelIds, handlers);
+      // Default conversation responder is the LLM. Pre-loading it here
+      // lets the user enter a conversation chat with zero wait. If they
+      // pick translation in the mode picker, the responder ensure call
+      // will unload the LLM and load Bergamot instead.
+      await bootstrap.ensureResponderReady(
+        'conversation',
+        settings,
+        modelIds,
+        {},
+        handlers,
+      );
 
       const conversationStore = useConversationStore.getState();
       if (

@@ -97,7 +97,14 @@ export default function ModePickerScreen() {
         targetLang = toLang;
       }
 
-      await ensureResponder(mode, { sourceLang, targetLang });
+      // Kick off the responder load in the background and route immediately —
+      // the conversation screen owns the ModelLoadingOverlay that surfaces
+      // download progress, so blocking on `ensureResponder` here would freeze
+      // the user on the picker for the entire ~1 GB LLM download with no
+      // visible feedback. `ensureResponder` is idempotent, so the conversation
+      // screen's own call later is a safe no-op when the model is already
+      // loaded.
+      void ensureResponder(mode, { sourceLang, targetLang });
       await createConversation(mode, { sourceLang, targetLang });
       router.replace('/conversation');
     } finally {

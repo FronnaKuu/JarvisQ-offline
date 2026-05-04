@@ -112,7 +112,7 @@ async function writePackageJson() {
   // A tiny package.json inside the output tells Node to treat .mjs as ESM and
   // locks the entry point that electron-builder picks up.
   const payload = {
-    name: 'jarvisqvac-desktop',
+    name: 'jarvisq-desktop',
     private: true,
     main: 'main.mjs',
     type: 'module',

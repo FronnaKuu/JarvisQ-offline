@@ -125,10 +125,10 @@ export default function SetupScreen() {
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.content}>
         <Text variant="headlineMedium" style={styles.title}>
-          JarvisQVAC
+          JarvisQ
         </Text>
         <Text variant="bodyMedium" style={styles.subtitle}>
-          On-device AI voice assistant powered by QVAC
+          On-device AI voice assistant powered by QVAC SDK
         </Text>
 
         <View style={styles.section}>

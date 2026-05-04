@@ -6,6 +6,9 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+// Directory kept under the legacy `JarvisQVAC` name so existing installs
+// retain their conversations and settings after the JarvisQVAC -> JarvisQ
+// rename. A future migration step can move the directory to `JarvisQ`.
 const APP_DIRECTORY_NAME = 'JarvisQVAC';
 
 /**

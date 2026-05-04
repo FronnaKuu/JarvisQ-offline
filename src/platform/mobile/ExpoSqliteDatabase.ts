@@ -5,6 +5,8 @@
 import * as SQLite from 'expo-sqlite';
 import type { IDatabase, SqlParam } from '@core/ports/IDatabase';
 
+// Filename kept under the legacy name so the JarvisQVAC -> JarvisQ rename
+// does not orphan user conversations on existing installs.
 const DB_NAME = 'jarvisqvac.db';
 
 const SCHEMA_SQL = `

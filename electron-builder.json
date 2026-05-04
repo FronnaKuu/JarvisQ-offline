@@ -1,7 +1,7 @@
 {
-  "appId": "com.jarvisqvac.desktop",
-  "productName": "JarvisQVAC",
-  "copyright": "© JarvisQVAC",
+  "appId": "app.jarvisq.desktop",
+  "productName": "JarvisQ",
+  "copyright": "© JarvisQ contributors",
   "directories": {
     "output": "release/desktop/win",
     "buildResources": "electron/build"
@@ -53,14 +53,14 @@
         "arch": ["x64"]
       }
     ],
-    "artifactName": "JarvisQVAC-${version}-${arch}.${ext}",
+    "artifactName": "JarvisQ-${version}-${arch}.${ext}",
     "signAndEditExecutable": false
   },
   "nsis": {
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
-    "shortcutName": "JarvisQVAC"
+    "shortcutName": "JarvisQ"
   },
   "publish": null
 }

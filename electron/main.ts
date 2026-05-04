@@ -45,7 +45,7 @@ const STT_TARGET_SAMPLE_RATE = 16_000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-app.setName('JarvisQVAC');
+app.setName('JarvisQ');
 
 let mainWindow: BrowserWindow | null = null;
 let pipeline: VoicePipeline | null = null;
@@ -244,7 +244,7 @@ app.whenReady().then(onReady).catch((error: unknown) => {
   // Bootstrap failures before the window exists are fatal — show the system
   // dialog and abort rather than silently starving the renderer.
   const message = error instanceof Error ? error.message : String(error);
-  dialog.showErrorBox('JarvisQVAC failed to start', message);
+  dialog.showErrorBox('JarvisQ failed to start', message);
   app.quit();
 });
 

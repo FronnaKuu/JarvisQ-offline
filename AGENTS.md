@@ -1,12 +1,11 @@
-# Instructions for AI coding agents
+# Contributor & agent guide
 
-This file is the contract between the JarvisQVAC codebase and any AI agent
-(Claude Code, Cursor, etc.) asked to make changes. Read it fully before
-touching files.
+This file is the contract for both human contributors and AI coding agents
+working on the JarvisQ codebase. Read it fully before touching files.
 
 ## Project in one paragraph
 
-JarvisQVAC is an Expo + React Native consumer of the Tether **`@qvac/sdk`**
+JarvisQ is an Expo + React Native consumer of the Tether **`@qvac/sdk`**
 that ships an on-device voice assistant (STT → LLM → TTS). The codebase
 follows hexagonal / ports-and-adapters architecture so the same core can power
 mobile today and desktop (Windows / macOS / Linux) tomorrow. See `README.md`
@@ -157,7 +156,7 @@ Checklist, in order, before blaming cache:
    `Dozing`, the screenshot will be solid black. Wake with
    `adb shell input keyevent KEYCODE_WAKEUP`.
 2. **Foreground window** — `adb shell dumpsys window | grep mCurrentFocus`.
-   If it says `NotificationShade` or another app, the JarvisQVAC UI isn't
+   If it says `NotificationShade` or another app, the JarvisQ UI isn't
    actually visible.
 3. **Fresh bundle** — verify with the `grep -c -a` trick above.
 4. **Splash screen stuck** — if a centered icon floats mid-screen over the
@@ -165,11 +164,12 @@ Checklist, in order, before blaming cache:
    `SplashScreen.preventAutoHideAsync()` + `hideAsync()` in
    `src/app/_layout.tsx`; don't remove it.
 5. **Two apps installed** — `adb shell pm list packages | grep jarvis`. The
-   current package is `com.anonymous.jarvisqvac`. A legacy
-   `com.jarvis.assistant` may coexist; the launcher icon is ambiguous.
+   current package is `app.jarvisq.mobile`. A legacy
+   `com.anonymous.jarvisqvac` or `com.jarvis.assistant` may coexist after
+   the rename; the launcher icon is ambiguous.
 
 Only after 1–5 check out should you reach for a full clean
-(`adb uninstall com.anonymous.jarvisqvac` + wipe `android/app/build`).
+(`adb uninstall app.jarvisq.mobile` + wipe `android/app/build`).
 
 ## Desktop (Windows) build & verify
 
@@ -198,7 +198,7 @@ against `build/desktop/main.mjs`. No Metro / hot-reload — edit then re-run.
 ### Windows installer
 
 ```bash
-npm run desktop:dist:win        # produces release/desktop/win/JarvisQVAC-<v>-x64.exe
+npm run desktop:dist:win        # produces release/desktop/win/JarvisQ-<v>-x64.exe
 ```
 
 `electron-builder.json` emits a per-user NSIS installer. `qvac/**` is copied
@@ -224,7 +224,7 @@ its native addons from the filesystem.
 After `desktop:dist:win`, inspect the installer payload:
 
 ```bash
-7z l release/desktop/win/JarvisQVAC-*.exe | grep -E "worker.entry|addons.manifest"
+7z l release/desktop/win/JarvisQ-*.exe | grep -E "worker.entry|addons.manifest"
 ```
 
 Both `qvac/worker.entry.mjs` and `qvac/addons.manifest.json` must appear. If
@@ -234,12 +234,7 @@ miss any custom plugin configured in `qvac.config.json`.
 ## Commit style
 
 Conventional Commits. Use `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`.
-Subject under 70 chars. Body explains **why**, not what. Co-author trailer
-when a model assisted:
-
-```
-Co-Authored-By: Claude <noreply@anthropic.com>
-```
+Subject under 70 chars. Body explains **why**, not what.
 
 ## What NOT to do
 

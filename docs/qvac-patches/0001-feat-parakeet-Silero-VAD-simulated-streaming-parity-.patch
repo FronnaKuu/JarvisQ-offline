@@ -1,5 +1,5 @@
 From fb8ca6eb0396497794ee894e132d7b7f894cf4fb Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
+From: Helldez <74499579+Helldez@users.noreply.github.com>
 Date: Fri, 24 Apr 2026 12:00:24 +0200
 Subject: [PATCH 1/4] feat(parakeet): Silero VAD simulated streaming (parity
  with whisper)

@@ -1,7 +1,21 @@
 {
-  "name": "jarvisqvac",
-  "version": "1.0.3",
+  "name": "jarvisq",
+  "version": "1.1.0",
+  "description": "Private, on-device voice assistant — STT, LLM, and TTS running fully locally. Powered by the Tether QVAC SDK. Mobile (Android via Expo + React Native) and desktop (Windows / macOS / Linux via Electron) from a shared hexagonal core.",
   "main": "index.ts",
+  "license": "Apache-2.0",
+  "author": "Helldez <74499579+Helldez@users.noreply.github.com>",
+  "homepage": "https://github.com/Helldez/JarvisQ#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Helldez/JarvisQ.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Helldez/JarvisQ/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -9,6 +23,8 @@
     "web": "expo start --web",
     "prebuild": "npx expo prebuild",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "desktop:bundle-worker": "npx @qvac/cli bundle sdk",
     "desktop:build": "node scripts/build-desktop.mjs",
     "desktop:dev": "npm run desktop:build && electron build/desktop/main.mjs",
@@ -88,7 +104,8 @@
     "electron-builder": "^25.1.8",
     "esbuild": "^0.24.2",
     "patch-package": "^8.0.1",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^2.1.9"
   },
   "private": true,
   "overrides": {}

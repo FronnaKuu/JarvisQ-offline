@@ -140,14 +140,14 @@ bare-make build
 bare-make install
 # produces: prebuilds/android-arm64/qvac__transcription-parakeet.bare
 
-# 4. Drop the prebuild into the JarvisQVAC node_modules so expo prebuild picks it up
+# 4. Drop the prebuild into the JarvisQ node_modules so expo prebuild picks it up
 cp prebuilds/android-arm64/qvac__transcription-parakeet.bare \
-   /path/to/JarvisQVAC/node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/
+   /path/to/JarvisQ/node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/
 
 # 5. Rebuild the SDK package and overlay onto the app's node_modules
 cd ../sdk
 npm install && npm run build
-cp -r dist/* /path/to/JarvisQVAC/node_modules/@qvac/sdk/dist/
+cp -r dist/* /path/to/JarvisQ/node_modules/@qvac/sdk/dist/
 # Or regenerate patches/@qvac+sdk+0.9.0.patch via patch-package once the
 # node_modules content matches.
 ```

@@ -1,13 +1,42 @@
-# JarvisQVAC
+# JarvisQ
 
-On-device, private voice assistant built as an extension of the
-[Tether QVAC SDK](https://github.com/tetherto/qvac-sdk). Runs the full STT →
-LLM → TTS pipeline locally: no data leaves the device.
+Private, on-device voice assistant — STT → LLM → TTS pipeline running fully
+locally on the user's hardware. **No data leaves the device.**
 
-Currently ships as an Expo + React Native application targeting Android. The
-codebase is structured as a **hexagonal / ports-and-adapters** architecture so
-the same core can be wired to additional runtimes (iOS, Windows, macOS, Linux)
-by adding a new platform adapter — see [Architecture](#architecture).
+Built on top of the [Tether QVAC SDK](https://github.com/tetherto/qvac-sdk)
+(`@qvac/sdk`). Currently ships as an Expo + React Native application targeting
+Android, with a Windows / macOS / Linux desktop target via Electron. The
+codebase follows a **hexagonal / ports-and-adapters** architecture so the same
+core can be wired to additional runtimes by adding a new platform adapter —
+see [Architecture](#architecture).
+
+> JarvisQ is an independent project and is not affiliated with or endorsed by
+> Tether. "QVAC" is a trademark of Tether; this project references it only to
+> describe the origin of the underlying SDK.
+
+---
+
+## Privacy & threat model
+
+- **Fully on-device**. Speech recognition, language modelling, and speech
+  synthesis run inside the app process. Microphone audio, transcripts, and
+  generated text are never sent to any remote service.
+- **No telemetry**. The app makes no analytics or crash-reporting calls.
+- **Conversations stored locally**, in a SQLite database under the app's
+  private storage. They are never uploaded.
+- **Network usage is limited to model distribution**. The first time a model
+  is needed, JarvisQ downloads its weights either through the QVAC P2P
+  registry (Hyperswarm) or — when no peers are reachable — over HTTPS from
+  Hugging Face. Every HTTPS URL is pinned to a specific commit SHA in
+  `src/core/config/HttpModelSources.ts` for reproducibility.
+- **Connectivity probe only**. Before starting a download the app issues a
+  single HEAD request to `https://www.google.com/generate_204` to detect
+  offline state. No data is exchanged.
+- **Permissions** (Android): `RECORD_AUDIO`, `INTERNET`, `ACCESS_NETWORK_STATE`.
+  No location, contacts, storage, or background services.
+
+If you find a vulnerability, please follow the disclosure process in
+[SECURITY.md](SECURITY.md).
 
 ---
 
@@ -21,19 +50,23 @@ by adding a new platform adapter — see [Architecture](#architecture).
     only).
   - `system` — device-native engine through `expo-speech` (Google TTS on
     Android, AVSpeechSynthesizer on iOS). Language, voice and default engine
-    follow the OS-level TTS settings; the Settings screen exposes an "Open
-    system TTS settings" shortcut that launches the `TTS_SETTINGS` intent.
+    follow the OS-level TTS settings; the Settings screen exposes an
+    "Open system TTS settings" shortcut that launches the `TTS_SETTINGS` intent.
   - Per-turn speed and pitch are configurable; the engine accepts runtime
     `TtsRuntimeOptions` through `ITtsService.speak()`.
 - **TTS timing modes** — `streaming` (low time-to-first-audio, speaks each
   clause while the LLM is still decoding) or `buffered` (speaks only after
   the full response is ready — avoids token-stream contention with on-device
   synthesis on weaker devices).
+- **Translation mode** — Bergamot NMT pairs with English pivot fallback for
+  any language combination the SDK exposes; LLM-driven translation is also
+  selectable per conversation.
 - **P2P model distribution** via Hyperswarm registry with **HTTPS fallback**
   to HuggingFace. TTS fallback handles split `.onnx` + `.onnx_data` files
   correctly by pre-downloading with original filenames.
 - **Voice activity detection** based on `expo-av` metering with configurable
-  speech/silence thresholds.
+  speech/silence thresholds; the parakeet streaming path uses Silero VAD
+  for sub-second endpointing.
 - **Conversation persistence** with SQLite (history, per-conversation model
   settings, streaming-aware message updates).
 
@@ -52,9 +85,13 @@ by adding a new platform adapter — see [Architecture](#architecture).
 ### Install
 
 ```bash
-npm install
+npm install --legacy-peer-deps
 npx expo prebuild
 ```
+
+> `--legacy-peer-deps` is required because some of the bare-* runtime
+> packages declare strict peer ranges that npm 10's strict resolver rejects
+> without it. CI uses the same flag.
 
 ### Run a debug build (hot reload)
 
@@ -109,7 +146,7 @@ src/
 │   ├── mobile/      Expo adapters (ExpoAudioRecorder, ExpoFileSystem,
 │   │                ExpoSqliteDatabase, AsyncStorageKeyValueStore,
 │   │                ExpoPermissions, RnVibrationHaptics,
-│   │                bootstrap.ts — registers adapters into the container)
+│   │                bootstrap.ts — registers adapters into the container,
 │   │                SystemTtsService — expo-speech adapter selected at
 │   │                runtime when AppSettings.ttsEngine === 'system')
 │   └── desktop/     Node adapters (NodeFileSystem, JsonFileKeyValueStore,
@@ -202,17 +239,25 @@ Supported profiles:
 |------|---------|--------------|
 | STT  | `parakeet_tdt_int8` | `whisper_{tiny,base,small,large_v3_turbo}`, `parakeet_tdt_fp32` |
 | LLM  | `qwen3_1_7b`        | `qwen3_4b` |
-| TTS  | `supertonic_en`     | `system` (device-native, selected via `AppSettings.ttsEngine`) |
+| TTS  | `supertonic2`       | `system` (device-native, selected via `AppSettings.ttsEngine`) |
 
 ---
 
-## Compatibility
+## Compatibility & upstream contributions
 
-JarvisQVAC tracks **`@qvac/sdk` 0.8.x**. The SDK is loaded as a regular
-dependency and kept unforked. A small `patches/@qvac+sdk+<version>.patch` is
-applied via `patch-package` on `postinstall` for targeted upstream fixes; it
-is refreshed or dropped on each SDK bump, never grown into a wrapper layer.
-This project is a *consumer* of QVAC, not a fork of it.
+JarvisQ tracks **`@qvac/sdk` 0.9.x**. The SDK is loaded as a regular
+dependency and kept unforked. Two small files in `patches/` are applied via
+`patch-package` on `postinstall` for targeted upstream fixes; they are
+refreshed or dropped on each SDK bump, never grown into a wrapper layer.
+
+The parakeet streaming + Silero VAD work that JarvisQ relies on is an
+in-flight upstream contribution to `tetherto/qvac`. It is maintained as a
+five-patch series in [`docs/qvac-patches/`](docs/qvac-patches/) (exported
+with `git format-patch` from the
+[`Helldez/qvac@feat/parakeet-streaming-silero-vad`](https://github.com/Helldez/qvac/tree/feat/parakeet-streaming-silero-vad)
+branch). Once the series is merged upstream and a release ships on npm, the
+`patches/` directory and `docs/qvac-patches/` will be removed in a single
+SDK-bump commit.
 
 ---
 
@@ -222,12 +267,18 @@ Run the checks before opening a PR:
 
 ```bash
 npm run typecheck
+npm test
 ```
 
-Code style: English identifiers and comments, two-space indent, no default
-exports except for React components. Keep platform leaks out of `src/core/`;
-extend the ports instead.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full flow and
+[AGENTS.md](AGENTS.md) for the architectural rules (English code only,
+core platform-free, port-first design, additive refactors).
+
+---
 
 ## License
 
-TBD.
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Third-party model weights downloaded at runtime are governed by their own
+upstream licenses; see each model card on Hugging Face.

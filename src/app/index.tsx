@@ -1,26 +1,45 @@
 // ---- Splash / Bootstrap Screen -------------------------------------------
-// Entry route: requests microphone permission, ensures all inference models
-// are loaded (from cache or via download), then redirects to the conversation
-// screen. Replaces the previous hard split between /setup and /conversation
-// so returning users never see a "Download & Setup" button when the cache is
-// already warm.
+// Entry route: requests microphone permission, ensures the always-on
+// inference services (STT + TTS) are loaded, then redirects to the chat or
+// the mode picker.
+//
+// LLM and Bergamot translator are deliberately not loaded here — they are
+// mutually exclusive on RAM and the active one is decided by the
+// conversation mode, so they load lazily when the user enters a chat. The
+// LLM row in this screen exposes that contract to the user instead of
+// hiding it.
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, ProgressBar, Text } from 'react-native-paper';
+import { Button, Text } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { useConversationStore } from '@domain/ConversationStore';
 import { getPlatform } from '@core/platform/PlatformContainer';
+import { DownloadProgressItem } from '@ui/components/DownloadProgress';
 import { AppTheme } from '@ui/theme/theme';
-import type { ServiceKind } from '@core/bootstrap/AppBootstrap';
+import type { ServiceStatus } from '@domain/BootstrapStore';
+import type { DownloadProgress } from '@domain/types';
 
-// Only the always-on services run during bootstrap. The responder (llm or
-// Bergamot translator) is downloaded lazily when the user first opens a
-// chat of that mode, so it does not contribute to this progress bar.
-const SERVICE_ORDER: ServiceKind[] = ['stt', 'tts'];
+// Services downloaded and loaded at splash time, in call order. Bergamot is
+// not in this list: its language pair is unknown until the user opens the
+// mode picker, so it stays lazy. Conversation chats are zero-wait once the
+// splash is done; translation chats see a brief overlay for Bergamot.
+const BOOT_KINDS = ['stt', 'llm', 'tts'] as const;
+
+function snapshotToDownloadProgress(
+  status: ServiceStatus,
+): DownloadProgress | null {
+  if (!status.progress) return null;
+  return {
+    bytesDownloaded: status.progress.bytesDownloaded,
+    totalBytes: status.progress.totalBytes,
+    percentage: status.progress.percentage,
+    currentFile: status.label,
+  };
+}
 
 export default function Index() {
   const router = useRouter();
@@ -54,29 +73,11 @@ export default function Index() {
 
   useEffect(() => {
     if (phase !== 'ready') return;
-    // Existing users land on their last chat; first-run (empty list) routes to
-    // the mode picker so the user chooses 'conversation' or 'translation'
+    // Existing users land on their last chat; first-run (empty list) routes
+    // to the mode picker so the user chooses 'conversation' or 'translation'
     // before any responder model is downloaded.
     router.replace(hasConversations ? '/conversation' : '/mode-picker');
   }, [phase, hasConversations, router]);
-
-  const { overallPercent, hasProgress } = useMemo(() => {
-    let sum = 0;
-    let anyProgress = false;
-    for (const kind of SERVICE_ORDER) {
-      const s = services[kind];
-      if (s.phase === 'done') {
-        sum += 100;
-      } else if (s.progress) {
-        sum += s.progress.percentage;
-        anyProgress = true;
-      }
-    }
-    return {
-      overallPercent: sum / SERVICE_ORDER.length,
-      hasProgress: anyProgress,
-    };
-  }, [services]);
 
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -114,6 +115,8 @@ export default function Index() {
         ? 'Offline — loading cached models'
         : 'Preparing on-device models';
 
+  const translatorStatus = services.translator;
+
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.content}>
@@ -130,7 +133,7 @@ export default function Index() {
 
         <View style={styles.titleBlock}>
           <Text variant="headlineSmall" style={styles.title}>
-            JarvisQVAC
+            JarvisQ
           </Text>
           <Text variant="bodyMedium" style={styles.subtitle}>
             {statusLabel}
@@ -138,12 +141,24 @@ export default function Index() {
         </View>
 
         {phase !== 'error' ? (
-          <ProgressBar
-            indeterminate={!hasProgress}
-            progress={hasProgress ? overallPercent / 100 : 0}
-            style={styles.bar}
-            color={AppTheme.colors.primary}
-          />
+          <View style={styles.section}>
+            {BOOT_KINDS.map((kind) => {
+              const status = services[kind];
+              return (
+                <DownloadProgressItem
+                  key={kind}
+                  label={status.label || kind.toUpperCase()}
+                  progress={snapshotToDownloadProgress(status)}
+                  isDone={status.phase === 'done'}
+                  phase={status.phase}
+                />
+              );
+            })}
+            <DeferredItem
+              label={translatorStatus.label || 'Bergamot translator'}
+              hint="Loads when you start a translation"
+            />
+          </View>
         ) : null}
 
         {phase === 'error' && errorMessage ? (
@@ -163,6 +178,28 @@ export default function Index() {
         ) : null}
       </View>
     </SafeAreaView>
+  );
+}
+
+interface DeferredItemProps {
+  label: string;
+  hint: string;
+}
+
+// Renders the same row layout as DownloadProgressItem for visual parity but
+// without a progress bar — used for services that load lazily downstream.
+function DeferredItem({ label, hint }: DeferredItemProps) {
+  return (
+    <View style={styles.deferredItem}>
+      <View style={styles.deferredRow}>
+        <Text variant="bodyMedium" style={styles.deferredLabel} numberOfLines={1}>
+          {label}
+        </Text>
+        <Text variant="bodySmall" style={styles.deferredHint}>
+          {hint}
+        </Text>
+      </View>
+    </View>
   );
 }
 
@@ -201,11 +238,31 @@ const styles = StyleSheet.create({
     color: AppTheme.colors.outline,
     textAlign: 'center',
   },
-  bar: {
-    height: 3,
-    width: '60%',
-    borderRadius: AppTheme.radius.sm,
-    backgroundColor: AppTheme.colors.surfaceVariant,
+  section: {
+    width: '100%',
+    backgroundColor: AppTheme.colors.surface,
+    borderRadius: AppTheme.radius.xl,
+    padding: AppTheme.spacing.lg,
+    gap: AppTheme.spacing.xs,
+  },
+  deferredItem: {
+    paddingVertical: AppTheme.spacing.sm,
+  },
+  deferredRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: AppTheme.spacing.sm,
+  },
+  deferredLabel: {
+    color: AppTheme.colors.onBackground,
+    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    opacity: 0.65,
+  },
+  deferredHint: {
+    color: AppTheme.colors.outline,
+    flexShrink: 0,
   },
   errorBlock: {
     width: '100%',

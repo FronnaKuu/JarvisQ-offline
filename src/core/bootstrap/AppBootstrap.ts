@@ -74,8 +74,6 @@ export class AppBootstrap {
   ): Promise<void> {
     const sttProfile =
       STT_PROFILES[modelIds.sttModelId] ?? STT_PROFILES[DEFAULT_STT_PROFILE_ID]!;
-    const ttsProfile =
-      TTS_PROFILES[modelIds.ttsModelId] ?? TTS_PROFILES[DEFAULT_TTS_PROFILE_ID]!;
 
     if (!SttService.isLoaded) {
       handlers.onServiceStart?.('stt', sttProfile.label);

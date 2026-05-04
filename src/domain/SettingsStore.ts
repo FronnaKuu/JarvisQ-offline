@@ -13,6 +13,9 @@ import {
   DEFAULT_TTS_PROFILE_ID,
 } from '@core/config/ModelConfig';
 
+// Storage keys are kept under the legacy `jarvisqvac_*` prefix so users who
+// upgrade across the JarvisQVAC -> JarvisQ rename retain their settings.
+// Do not rename without writing a migration in the IKeyValueStore adapter.
 const SETTINGS_KEY = 'jarvisqvac_settings';
 const MODEL_IDS_KEY = 'jarvisqvac_model_ids';
 

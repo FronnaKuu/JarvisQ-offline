@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build qvac-lib-infer-parakeet with Silero VAD streaming for android-arm64
-# and install the prebuilt .bare into the JarvisQVAC node_modules so the
+# and install the prebuilt .bare into the JarvisQ node_modules so the
 # next expo prebuild picks it up.
 #
 # Prereqs (Windows):
@@ -8,19 +8,21 @@
 #   - Android NDK (r25+) available under ANDROID_HOME
 #   - vcpkg cloned + bootstrapped
 #
-# Usage:
-#   QVAC_SRC=/c/Users/raffa/Documents/qvac-src \
-#   VCPKG_ROOT=/c/Users/raffa/vcpkg \
-#   ANDROID_HOME=/c/Users/raffa/AppData/Local/Android/Sdk \
-#   JARVIS_ROOT=/c/Users/raffa/Documents/JarvisQVAC \
+# Usage (override any of the four with your local paths):
+#   QVAC_SRC=/path/to/qvac-src \
+#   VCPKG_ROOT=/path/to/vcpkg \
+#   ANDROID_HOME=/path/to/Android/Sdk \
+#   JARVIS_ROOT=/path/to/JarvisQ \
 #   ./build-android-arm64.sh
+#
+# Defaults assume sibling layout under $HOME (override via env if elsewhere).
 
 set -euo pipefail
 
-QVAC_SRC="${QVAC_SRC:-/c/Users/raffa/Documents/qvac-src}"
-VCPKG_ROOT="${VCPKG_ROOT:-/c/Users/raffa/vcpkg}"
-ANDROID_HOME="${ANDROID_HOME:-/c/Users/raffa/AppData/Local/Android/Sdk}"
-JARVIS_ROOT="${JARVIS_ROOT:-/c/Users/raffa/Documents/JarvisQVAC}"
+QVAC_SRC="${QVAC_SRC:-$HOME/qvac-src}"
+VCPKG_ROOT="${VCPKG_ROOT:-$HOME/vcpkg}"
+ANDROID_HOME="${ANDROID_HOME:-$HOME/AppData/Local/Android/Sdk}"
+JARVIS_ROOT="${JARVIS_ROOT:-$HOME/JarvisQ}"
 
 export VCPKG_ROOT ANDROID_HOME
 
