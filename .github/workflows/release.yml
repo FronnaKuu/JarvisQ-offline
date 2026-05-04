@@ -26,6 +26,21 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
 
+      - name: Free disk space
+        # ubuntu-latest ships with ~14 GB free, which is not enough to
+        # strip native libs for all 4 Android ABIs alongside the QVAC SDK
+        # native addons. Reclaim ~14 GB by dropping toolchains we never
+        # use; keep the Android SDK that setup-android refreshes below.
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: false
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+          docker-images: false
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -70,6 +85,11 @@ jobs:
         run: npx expo prebuild --platform android --clean
 
       - name: Assemble release APK
+        # Only build arm64-v8a. Modern Android devices are 64-bit ARM and
+        # the Play Store no longer accepts 32-bit-only uploads — shipping
+        # x86/x86_64/armeabi-v7a in the APK only inflates the install size
+        # and pushes the build past the runner's free disk.
+        #
         # The debug keystore that expo-prebuild generates is enough for
         # internal sideload distribution. To produce a Play Store-eligible
         # APK, set `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
@@ -77,7 +97,7 @@ jobs:
         # write a `release` signingConfig in `android/app/build.gradle`,
         # and decode the keystore in a step before this one.
         working-directory: android
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
 
       - name: Verify the bundle is fresh
         # Catches the silent failure where Gradle reports UP-TO-DATE but
@@ -94,7 +114,7 @@ jobs:
         id: package
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          ARTIFACT="JarvisQ-${VERSION}-android-arm64.apk"
+          ARTIFACT="JarvisQ-${VERSION}-android-arm64-v8a.apk"
           mv android/app/build/outputs/apk/release/app-release.apk "$ARTIFACT"
           sha256sum "$ARTIFACT" | tee "${ARTIFACT}.sha256"
           {
