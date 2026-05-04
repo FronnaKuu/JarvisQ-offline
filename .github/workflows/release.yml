@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag, or SHA to build (defaults to current ref).'
+        required: false
+        default: ''
+
+# `softprops/action-gh-release` needs write access to attach assets to the
+# Release. Everything else stays read-only.
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Build Android release APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK + NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0 ndk;29.0.14206865'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Install dependencies
+        # Strict peer ranges in some bare-* runtime packages need this flag.
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck + unit tests
+        # Defense in depth: ci.yml already runs these, but a release build
+        # must re-verify on the exact ref it ships from.
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Generate native Android project
+        # --clean so the release build never inherits stale state from the
+        # cached working directory of a previous run.
+        run: npx expo prebuild --platform android --clean
+
+      - name: Assemble release APK
+        # The debug keystore that expo-prebuild generates is enough for
+        # internal sideload distribution. To produce a Play Store-eligible
+        # APK, set `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+        # `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` as repo secrets,
+        # write a `release` signingConfig in `android/app/build.gradle`,
+        # and decode the keystore in a step before this one.
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Verify the bundle is fresh
+        # Catches the silent failure where Gradle reports UP-TO-DATE but
+        # the embedded JS bundle is from a previous run.
+        run: |
+          unzip -p android/app/build/outputs/apk/release/app-release.apk \
+            assets/index.android.bundle > /tmp/b.hbc
+          if ! grep -q -a "JarvisQ" /tmp/b.hbc; then
+            echo "::error::Embedded bundle does not contain the JarvisQ marker — stale build."
+            exit 1
+          fi
+
+      - name: Rename APK + compute SHA256
+        id: package
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          ARTIFACT="JarvisQ-${VERSION}-android-arm64.apk"
+          mv android/app/build/outputs/apk/release/app-release.apk "$ARTIFACT"
+          sha256sum "$ARTIFACT" | tee "${ARTIFACT}.sha256"
+          {
+            echo "artifact=${ARTIFACT}"
+            echo "checksum=${ARTIFACT}.sha256"
+            echo "version=${VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload as workflow artifact (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-${{ steps.package.outputs.version }}
+          path: |
+            ${{ steps.package.outputs.artifact }}
+            ${{ steps.package.outputs.checksum }}
+          retention-days: 30
+
+      - name: Attach APK + checksum to GitHub Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.package.outputs.artifact }}
+            ${{ steps.package.outputs.checksum }}
+          fail_on_unmatched_files: true
