@@ -61,6 +61,7 @@ export class WebAudioRecorder implements IAudioRecorder {
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
   private listenTimer: ReturnType<typeof setTimeout> | null = null;
   private stopResolve: ((result: WebAudioRecorderCapture | null) => void) | null = null;
+  private stopReject: ((err: Error) => void) | null = null;
   private startTime = 0;
 
   private readonly speechThresholdDb: number;
@@ -99,14 +100,41 @@ export class WebAudioRecorder implements IAudioRecorder {
     this.meteringAvailable = false;
     this.startTime = performance.now();
 
+    // Note on processing flags: Chromium's WebRTC APM (echoCancellation +
+    // noiseSuppression + autoGainControl) emits silence on certain Windows
+    // driver combinations, notably some AMD Audio Device array mics. The
+    // safe baseline is to leave the OS device's native processing in
+    // charge: that's what Windows' own Voice Recorder does, and the
+    // VAD/STT chain downstream tolerates raw audio fine.
     this.mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
       },
     });
+
+    // Chromium on Windows does not reject getUserMedia when the OS-level
+    // microphone permission is denied — it returns a stream whose audio
+    // track is silently muted. Detect that case and surface a meaningful
+    // error so the user knows to flip the toggle in
+    // Settings → Privacy → Microphone → "Let desktop apps access your
+    // microphone".
+    const tracks = this.mediaStream.getAudioTracks();
+    const track = tracks[0];
+    const trackLabel = track?.label ?? '<unknown device>';
+    console.log('[wa] track ready, muted=', track?.muted, 'readyState=', track?.readyState, 'label=', trackLabel);
+    if (!track || track.readyState !== 'live') {
+      for (const t of tracks) t.stop();
+      this.mediaStream = null;
+      throw new Error(
+        'Microphone capture failed: audio track is not live. Check that a microphone is connected and not in use by another app.',
+      );
+    }
+    // `track.muted` is racy — Chromium reports it true initially and emits
+    // an `unmute` event when audio starts flowing. Don't bail on it; rely
+    // on the early-dBFS probe below to detect a truly silent stream.
 
     this.audioContext = new AudioContext();
     await this.audioContext.audioWorklet.addModule(buildWorkletObjectUrl());
@@ -125,8 +153,41 @@ export class WebAudioRecorder implements IAudioRecorder {
       void this.finalize();
     }, this.listenTimeoutMs);
 
-    return await new Promise<WebAudioRecorderCapture | null>((resolve) => {
+    // Early-silence probe: if after 2 s the loudest frame is still below
+    // -85 dBFS, the microphone is producing pure digital silence — almost
+    // always because the OS-level permission is denied or the device is
+    // muted/missing in Sound Settings. Surface a clear error instead of
+    // letting the user wait the full 20 s timeout.
+    const SILENCE_PROBE_MS = 2_000;
+    const SILENCE_FLOOR_DBFS = -85;
+    setTimeout(() => {
+      if (this.state !== 'recording') return;
+      let peak = -Infinity;
+      for (const c of this.chunks) {
+        const db = computeDbFs(c);
+        if (db > peak) peak = db;
+      }
+      if (peak < SILENCE_FLOOR_DBFS) {
+        console.warn('[wa] early-silence detected, peak=', peak.toFixed(1), 'dBFS — aborting capture');
+        const reject = this.stopReject;
+        this.stopResolve = null;
+        this.stopReject = null;
+        this.clearTimers();
+        void this.teardownGraph().then(() => {
+          this.setState('idle');
+          reject?.(new Error(
+            `Microphone "${trackLabel}" is producing only digital silence (peak ${peak.toFixed(1)} dBFS). ` +
+            'Check: 1) Windows Settings → Privacy & security → Microphone, all 3 toggles ON; ' +
+            '2) Settings → System → Sound → Input — the right device is the default and shows level when you speak; ' +
+            '3) the device input volume is not 0; 4) no other app holds the mic exclusively.',
+          ));
+        });
+      }
+    }, SILENCE_PROBE_MS);
+
+    return await new Promise<WebAudioRecorderCapture | null>((resolve, reject) => {
       this.stopResolve = resolve;
+      this.stopReject = reject;
     });
   }
 
@@ -136,6 +197,7 @@ export class WebAudioRecorder implements IAudioRecorder {
     await this.teardownGraph();
     this.stopResolve?.(null);
     this.stopResolve = null;
+    this.stopReject = null;
     this.setState('idle');
   }
 
@@ -196,6 +258,7 @@ export class WebAudioRecorder implements IAudioRecorder {
 
     this.stopResolve?.(result);
     this.stopResolve = null;
+    this.stopReject = null;
     this.setState('idle');
   }
 
