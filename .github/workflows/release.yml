@@ -72,6 +72,43 @@ jobs:
         # Strict peer ranges in some bare-* runtime packages need this flag.
         run: npm ci --legacy-peer-deps
 
+      # Streaming dictation requires the parakeet streaming patch series
+      # (Silero VAD + mid-segment partials), which is not yet released
+      # upstream. The published `@qvac/transcription-parakeet` npm package
+      # ships a stock native binding without the `startStreaming` /
+      # `appendStreamingAudio` / `endStreaming` symbols, so the JS-level
+      # patch in `patches/@qvac+transcription-parakeet+*.patch` would call
+      # into an undefined native function.
+      #
+      # The Helldez/qvac fork carries the patches and produces a verified
+      # android-arm64 prebuild as a tagged GitHub Release. This step pins
+      # the prebuild by tag, verifies its SHA256 against a hash hardcoded
+      # below, and overlays it into node_modules before `expo prebuild`
+      # picks up the prebuilds for the native Android project.
+      #
+      # When the patches land upstream and a parakeet release ships them,
+      # remove this step and bump the @qvac/transcription-parakeet
+      # dependency in package.json instead.
+      - name: Overlay patched parakeet prebuild from Helldez/qvac
+        env:
+          QVAC_PREBUILD_TAG: parakeet-streaming-1
+          EXPECTED_SHA256: bfb3ee8dc092c800a20de88eeb5b35406902a82c7308efba615429e8dffee85c
+        run: |
+          set -euo pipefail
+          ASSET="qvac__transcription-parakeet-android-arm64.bare"
+          URL="https://github.com/Helldez/qvac/releases/download/${QVAC_PREBUILD_TAG}/${ASSET}"
+          curl -fsSL --retry 3 --retry-delay 5 -o "${ASSET}" "${URL}"
+          echo "${EXPECTED_SHA256}  ${ASSET}" | sha256sum -c -
+          DEST="node_modules/@qvac/transcription-parakeet/prebuilds/android-arm64/qvac__transcription-parakeet.bare"
+          if [ ! -f "${DEST}" ]; then
+            echo "::error::Expected stock prebuild not found at ${DEST}"
+            exit 1
+          fi
+          install -m 0644 "${ASSET}" "${DEST}"
+          echo "Overlay complete:"
+          ls -la "${DEST}"
+          sha256sum "${DEST}"
+
       - name: Typecheck + unit tests
         # Defense in depth: ci.yml already runs these, but a release build
         # must re-verify on the exact ref it ships from.
