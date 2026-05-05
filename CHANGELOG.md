@@ -9,6 +9,39 @@ was named **JarvisQVAC** until version 1.0.3, then renamed to **JarvisQ**.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-05-05
+
+### Fixed
+- **Desktop audio capture** (`WebAudioRecorder`): when the OS-level
+  microphone permission is denied or Sound Settings has the wrong default
+  device, Chromium silently returns a live track that emits digital
+  silence. Previously the pipeline waited the full 20 s `listenTimeoutMs`
+  and went back to IDLE with no transcript. An early-silence probe now
+  fires 2 s after capture starts: if the loudest frame is still below
+  -85 dBFS it surfaces a descriptive error including the device label
+  and the captured peak.
+- **Desktop audio capture**: disabled Chromium's WebRTC AudioProcessingModule
+  (`echoCancellation`, `noiseSuppression`, `autoGainControl`) which on
+  certain Windows driver combinations — notably some AMD Audio Device
+  array mics — emits silence even though the underlying device works in
+  Windows' Voice Recorder. The VAD/STT chain downstream tolerates raw
+  audio fine.
+
+### CI
+- Added Windows installer build job to the Release workflow alongside
+  Android, with Defender exclusion to allow the unsigned NSIS installer
+  through GitHub-hosted runners. Tagged releases now attach both the
+  Android APK (`arm64-v8a`) and the Windows installer plus their SHA256
+  sidecars.
+- Switched the Android build to `arm64-v8a` only and freed ~14 GB on the
+  ubuntu-latest runner to fix the out-of-disk failures that affected
+  earlier release attempts.
+
+### Docs
+- README now carries License, CI, Release, and "Built with QVAC" badges.
+- Fixed upstream QVAC repository links (`tetherto/qvac-sdk` →
+  `tetherto/qvac`).
+
 ## [1.1.0] — 2026-05-03
 
 ### Changed

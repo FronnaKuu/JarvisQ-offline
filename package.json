@@ -1,6 +1,6 @@
 {
   "name": "jarvisq",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Private, on-device voice assistant — STT, LLM, and TTS running fully locally. Powered by the Tether QVAC SDK. Mobile (Android via Expo + React Native) and desktop (Windows / macOS / Linux via Electron) from a shared hexagonal core.",
   "main": "index.ts",
   "license": "Apache-2.0",
