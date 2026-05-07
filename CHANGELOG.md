@@ -9,6 +9,22 @@ was named **JarvisQVAC** until version 1.0.3, then renamed to **JarvisQ**.
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-05-07
+
+### Fixed
+- **Android streaming dictation** (`@qvac/transcription-parakeet`): the
+  v1.1.1 release pipeline shipped the stock npm prebuild of the parakeet
+  native binding, which is missing the streaming symbols
+  (`startStreaming`, `appendStreamingAudio`, `endStreaming`). Tapping the
+  microphone surfaced `TRANSCRIPTION_FAILED: this._binding.startStreaming
+  is not a function` and the app refused to record. The Release workflow
+  now overlays the patched android-arm64 prebuild from the
+  `Helldez/qvac@parakeet-streaming-1` fork tag (SHA256-pinned) into
+  `node_modules` between `npm ci` and `expo prebuild`, so the Gradle
+  build embeds the streaming-capable binary. `PROVENANCE.md` documents
+  the full chain of custody for the prebuild. Fixes
+  [#1](https://github.com/Helldez/JarvisQ/issues/1).
+
 ## [1.1.1] — 2026-05-05
 
 ### Fixed
