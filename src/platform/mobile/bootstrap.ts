@@ -17,6 +17,7 @@ if (typeof (globalThis as { Buffer?: unknown }).Buffer === 'undefined') {
 
 import { Audio } from 'expo-av';
 import { registerPlatform } from '@core/platform/PlatformContainer';
+import { modelsReadyLocally } from '@core/bootstrap/AppBootstrap'; // 路径按实际目录调整
 import { ExpoFileSystem } from './ExpoFileSystem';
 import { AsyncStorageKeyValueStore } from './AsyncStorageKeyValueStore';
 import { ExpoSqliteDatabase } from './ExpoSqliteDatabase';
@@ -36,7 +37,12 @@ export async function bootstrapMobile(): Promise<void> {
     database,
     haptics: new RnVibrationHaptics(),
     permissions: new ExpoPermissions(),
-    networkInfo: new FetchNetworkInfo(),
+    networkInfo: new FetchNetworkInfo({
+      // Offline-first: 一旦 STT+TTS+LLM 都已下载（AppBootstrap 在每次加载
+      // 成功后自动写入标记），isOnline() 直接返回 true，完全不做网络探测——
+      // 之后的每次启动零联网，即使处于离线环境。
+      isLocallyReady: () => modelsReadyLocally(),
+    }),
   });
 
   // Initialize in playback-only mode so the first TTS clip (e.g. a bootstrap
