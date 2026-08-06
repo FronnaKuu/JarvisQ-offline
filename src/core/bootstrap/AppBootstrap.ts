@@ -133,6 +133,7 @@ export class AppBootstrap {
         (p) => handlers.onServiceProgress?.('stt', toSnapshot(p)),
         sttProfile.buildHttpFallbackConfig?.(settings.useGpu, settings.sttLanguage),
       );
+      await persistModelReady('stt');
       handlers.onServiceDone?.('stt');
     }
 
@@ -152,6 +153,7 @@ export class AppBootstrap {
   ): Promise<void> {
     if (settings.ttsEngine === 'system') {
       handlers.onServiceStart?.('tts', 'System TTS');
+      await persistModelReady('tts');
       handlers.onServiceDone?.('tts');
       return;
     }
@@ -164,6 +166,7 @@ export class AppBootstrap {
       { fileSystem: getPlatform().fileSystem },
       (p) => handlers.onServiceProgress?.('tts', toSnapshot(p)),
     );
+    await persistModelReady('tts');
     handlers.onServiceDone?.('tts');
   }
 
@@ -227,6 +230,7 @@ export class AppBootstrap {
         );
         await LlmService.load(buildConfig(), progress, httpFallback);
       }
+      await persistModelReady('llm');
       handlers.onServiceDone?.('llm');
       return;
     }
