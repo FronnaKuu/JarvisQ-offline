@@ -9,6 +9,12 @@
 //      lazily the first time the user enters a chat of that mode (or when
 //      the translation pair changes).
 //
+// Offline-first: the LLM responder is loaded cache-first — the SDK resolves
+// the model from its on-disk cache with ZERO network I/O on repeat launches.
+// Only when the blob is missing (first install, cache eviction) do we retry
+// through the network paths (QVAC P2P registry, then HTTPS fallback). Pass
+// `offlineOnly: true` in ResponderLoadOptions to forbid that network retry.
+//
 // UI layers subscribe through BootstrapStore and do not depend on this class
 // directly. Moving this logic into core keeps it reusable by any future
 // target (desktop shell, CLI, test harness).
@@ -55,6 +61,13 @@ export interface ResponderLoadOptions {
   sourceLang?: string | null;
   /** Only used when mode === 'translation'. */
   targetLang?: string | null;
+  /**
+   * Offline-first hint. When true the responder is loaded from the local
+   * model cache only and the network retry (P2P + HTTPS fallback) is
+   * forbidden — any load failure propagates immediately. Omit (or pass
+   * false) on first install so a cache miss falls back to downloading.
+   */
+  offlineOnly?: boolean;
 }
 
 function toSnapshot(p: ModelProgressUpdate): ServiceProgressSnapshot {
@@ -122,6 +135,11 @@ export class AppBootstrap {
    * derived from (sourceLang, targetLang). Re-entrant: a no-op when the
    * correct model is already loaded; unloads + reloads when the translation
    * direction changes.
+   *
+   * Offline-first for the LLM: a cache-only load is attempted first (zero
+   * network I/O when the blob is already on disk — the repeat-launch case);
+   * the P2P/HTTPS fallback only runs when that cache miss signals the model
+   * was never downloaded or was evicted.
    */
   async ensureResponderReady(
     mode: ConversationMode,
@@ -142,19 +160,35 @@ export class AppBootstrap {
       if (LlmService.isLoaded) return;
 
       handlers.onServiceStart?.('llm', llmProfile.label);
-      await LlmService.load(
+      const progress = (p: ModelProgressUpdate) =>
+        handlers.onServiceProgress?.('llm', toSnapshot(p));
+      const buildConfig = () =>
         llmProfile.buildLoadConfig(
           settings.useGpu,
           settings.llmTemperature,
           settings.llmMaxTokens,
-        ),
-        (p) => handlers.onServiceProgress?.('llm', toSnapshot(p)),
-        llmProfile.buildHttpFallbackConfig?.(
-          settings.useGpu,
-          settings.llmTemperature,
-          settings.llmMaxTokens,
-        ),
+        );
+      const httpFallback = llmProfile.buildHttpFallbackConfig?.(
+        settings.useGpu,
+        settings.llmTemperature,
+        settings.llmMaxTokens,
       );
+
+      try {
+        // Cache-first pass: no P2P discovery, no HTTPS fallback, no probe.
+        const localConfig = buildConfig();
+        localConfig.offline = true;
+        await LlmService.load(localConfig, progress);
+      } catch (err) {
+        if (opts.offlineOnly) throw err;
+        // Blob missing (first install / cache evicted) — retry with the
+        // network paths (QVAC P2P registry, then HTTPS fallback).
+        console.warn(
+          '[AppBootstrap] LLM not found in local cache, loading via network…',
+          err,
+        );
+        await LlmService.load(buildConfig(), progress, httpFallback);
+      }
       handlers.onServiceDone?.('llm');
       return;
     }
