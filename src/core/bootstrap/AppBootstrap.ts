@@ -35,6 +35,7 @@ import { TranslatorService } from '@core/inference/TranslatorService';
 import { getPlatform } from '@core/platform/PlatformContainer';
 import type { AppSettings, ConversationMode } from '@domain/types';
 import type { ModelProgressUpdate } from '@qvac/sdk';
+import type { IKeyValueStore } from '@core/ports/IKeyValueStore';
 
 export type ServiceKind = 'stt' | 'llm' | 'tts' | 'translator';
 
@@ -77,6 +78,43 @@ function toSnapshot(p: ModelProgressUpdate): ServiceProgressSnapshot {
     percentage: p.percentage,
   };
 }
+
+// ─── Offline-ready markers ─────────────────────────────────────────────────
+// 每次模型加载成功后持久化一个标记，平台层通过它判断"模型是否已全部下载"，
+// 从而跳过连通性探测（见 FetchNetworkInfo 的 isLocallyReady 钩子）。
+const MODEL_READY_KEY_PREFIX = 'model.ready.';
+
+function readyKey(kind: ServiceKind): string {
+  return `${MODEL_READY_KEY_PREFIX}${kind}`;
+}
+
+function keyValueStore(): IKeyValueStore | null {
+  const platform = getPlatform() as { keyValueStore?: IKeyValueStore };
+  return platform.keyValueStore ?? null;
+}
+
+async function persistModelReady(kind: ServiceKind): Promise<void> {
+  try {
+    await keyValueStore()?.setItem(readyKey(kind), '1');
+  } catch (err) {
+    // 非致命：标记写失败的话下次启动最多重新探测一次。
+    console.warn(`[AppBootstrap] failed to persist ready marker for "${kind}"`, err);
+  }
+}
+
+/**
+ * 所有必需服务（STT/TTS/LLM）是否都已下载完成。被平台层网络探测器的
+ * isLocallyReady 钩子消费，使重复启动完全跳过联网检查。
+ */
+export async function modelsReadyLocally(): Promise<boolean> {
+  const kv = keyValueStore();
+  if (!kv) return false;
+  const values = await Promise.all(
+    (['stt', 'llm', 'tts'] as const).map((kind) => kv.getItem(readyKey(kind))),
+  );
+  return values.every((v) => v === '1');
+}
+
 
 export class AppBootstrap {
   /** Loads the services needed regardless of conversation mode: STT + TTS. */
