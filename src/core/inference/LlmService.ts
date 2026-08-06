@@ -16,6 +16,14 @@ export interface LlmLoadConfig {
   useGpu: boolean;
   /** Append /no_think to user messages (Qwen3 and compatible reasoning models). */
   noThink?: boolean;
+  /**
+   * Offline-first hint. When true the loader skips the HTTP fallback (and the
+   * P2P discovery path it would trigger) and loads straight from the on-disk
+   * model cache. Set automatically by AppBootstrap on repeat launches once
+   * models are known to be downloaded; the call fails fast if the blob is
+   * missing so the caller can retry with network enabled.
+   */
+  offline?: boolean;
 }
 
 class LlmServiceClass implements ILlmService {
@@ -55,10 +63,10 @@ class LlmServiceClass implements ILlmService {
     this.noThink = config.noThink ?? false;
 
     console.log(
-      `[LlmService] load device=${config.useGpu ? 'gpu' : 'cpu'} model=${config.modelConstant.modelId}`,
+      `[LlmService] load device=${config.useGpu ? 'gpu' : 'cpu'} model=${config.modelConstant.modelId} mode=${config.offline ? 'cache-only' : 'network-ok'}`,
     );
     const primary = buildLoadModelArgs(config);
-    const fallback = httpFallbackConfig
+    const fallback = !config.offline && httpFallbackConfig
       ? buildLoadModelArgs(httpFallbackConfig)
       : undefined;
 
@@ -69,6 +77,9 @@ class LlmServiceClass implements ILlmService {
         onProgress,
       });
     } else {
+      // Local-first path: the SDK resolves from its on-disk cache with zero
+      // network traffic when the blob is already downloaded. Also used when
+      // the caller explicitly requested offline (config.offline === true).
       this.modelId = await (loadModel as Function)({ ...primary, onProgress });
     }
   }
