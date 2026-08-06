@@ -80,6 +80,7 @@ import { AppConfig } from './AppConfig';
 import {
   PARAKEET_HTTP,
   QWEN3_HTTP,
+  QWEN3_4B_HTTP,
   SILERO_VAD_HTTP,
   SUPERTONIC_HTTP,
   WHISPER_HTTP,
@@ -326,7 +327,7 @@ export const LLM_PROFILES: Record<string, LlmProfile> = {
   },
   qwen3_4b: {
     id: 'qwen3_4b',
-    label: 'Qwen3 4B Q4 (~2.5 GB)',
+    label: 'Qwen3 4B Q4_K_M (~2.5 GB)',
     estimatedBytes: 2_500_000_000,
     buildLoadConfig: (useGpu, temperature, maxTokens) => ({
       modelConstant: QWEN3_4B_INST_Q4_K_M,
@@ -336,10 +337,18 @@ export const LLM_PROFILES: Record<string, LlmProfile> = {
       useGpu,
       noThink: true,
     }),
+    buildHttpFallbackConfig: (useGpu, temperature, maxTokens) => ({
+      modelConstant: { src: QWEN3_4B_HTTP.q4km, modelId: 'qwen3-4b-q4_k_m.gguf' },
+      contextSize: AppConfig.llm.contextSize,
+      temperature,
+      maxTokens,
+      useGpu,
+      noThink: true,
+    }),
   },
 };
 
-export const DEFAULT_LLM_PROFILE_ID = 'qwen3_1_7b';
+export const DEFAULT_LLM_PROFILE_ID = 'qwen3_4b';
 
 // ─── TTS Profiles ─────────────────────────────────────────────────────────────
 
