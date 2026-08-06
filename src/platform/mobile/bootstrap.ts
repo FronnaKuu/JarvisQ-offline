@@ -17,7 +17,7 @@ if (typeof (globalThis as { Buffer?: unknown }).Buffer === 'undefined') {
 
 import { Audio } from 'expo-av';
 import { registerPlatform } from '@core/platform/PlatformContainer';
-import { modelsReadyLocally } from '@core/bootstrap/AppBootstrap'; // 路径按实际目录调整
+import { modelsReadyLocally } from '@core/bootstrap/AppBootstrap';
 import { ExpoFileSystem } from './ExpoFileSystem';
 import { AsyncStorageKeyValueStore } from './AsyncStorageKeyValueStore';
 import { ExpoSqliteDatabase } from './ExpoSqliteDatabase';
